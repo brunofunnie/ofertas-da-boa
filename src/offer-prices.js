@@ -1,18 +1,12 @@
-export function groupStorePrices(offers) {
+export function groupEqualPrices(offers) {
   const groups = new Map();
   for (const offer of offers) {
-    const key = `${offer.store}:${offer.price_unit || 'un'}`;
-    if (!groups.has(key)) groups.set(key, {store:offer.store, unit:offer.price_unit, prices:[]});
-    const group = groups.get(key);
-    const add = (price, label, priceType) => {
-      if (!Number.isSafeInteger(price) || price <= 0) return;
-      const candidate = {price, label, priceType, offer};
-      const index = group.prices.findIndex(item => item.price === price);
-      if (index < 0) group.prices.push(candidate);
-      else if ((!label && group.prices[index].label) || (group.prices[index].label === label && (offer.updated > group.prices[index].offer.updated || (offer.updated === group.prices[index].offer.updated && offer.id > group.prices[index].offer.id)))) group.prices[index] = candidate;
-    };
-    add(offer.price, offer.condition || '', 'regular');
-    add(offer.club_price, 'Clube', 'club');
+    const unit = offer.price_unit || 'un', condition = (offer.condition || '').trim();
+    const key = JSON.stringify([offer.price, unit, condition.toLocaleLowerCase('pt-BR')]);
+    if (!groups.has(key)) groups.set(key, {key, price:offer.price, unit, condition, offers:[]});
+    const group = groups.get(key), index = group.offers.findIndex(item => item.store === offer.store);
+    if (index < 0) group.offers.push(offer);
+    else if (offer.updated > group.offers[index].updated || (offer.updated === group.offers[index].updated && offer.id > group.offers[index].id)) group.offers[index] = offer;
   }
   return [...groups.values()];
 }
