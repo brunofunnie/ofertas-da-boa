@@ -15,6 +15,17 @@ async function post(path, data = {}) {
   if (!response.ok) throw Error(result.error);
   return result;
 }
+function CategoryBar({ selected, onSelect }) {
+  const drag = useRef(null), suppressClick = useRef(false);
+  return <div className="scrollbar category-bar mt-3 flex gap-2 overflow-x-auto pb-1"
+    onPointerDown={event => { if (event.pointerType === 'mouse' && event.button === 0) drag.current = {x:event.clientX, scroll:event.currentTarget.scrollLeft, moved:false}; }}
+    onPointerMove={event => { if (!drag.current) return; const distance = event.clientX - drag.current.x; if (Math.abs(distance) > 5) { drag.current.moved = true; event.currentTarget.setPointerCapture(event.pointerId); event.currentTarget.scrollLeft = drag.current.scroll - distance; event.preventDefault(); } }}
+    onPointerUp={event => { if (!drag.current) return; suppressClick.current = drag.current.moved; drag.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); if (suppressClick.current) setTimeout(() => { suppressClick.current = false; }, 0); }}
+    onPointerCancel={() => { drag.current = null; }}
+    onClickCapture={event => { if (suppressClick.current) { event.preventDefault(); event.stopPropagation(); suppressClick.current = false; } }}>
+    {categories.map(category => <button key={category} onClick={() => onSelect(category)} className={`chip ${selected === category ? 'selected' : ''}`}>{category}</button>)}
+  </div>;
+}
 function AccountMenu({ user, onLogout, onSettings }) {
   const menu = useRef(null);
   return <details ref={menu} className="account-menu" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }} onKeyDown={event => { if (event.key === 'Escape') { menu.current.open = false; menu.current.querySelector('summary')?.focus(); } }}>
@@ -213,7 +224,7 @@ function App() {
     {message && <div className="mt-3 flex items-start justify-between gap-2 rounded-lg bg-[#fff1d6] px-3 py-2 text-xs text-[#824425]" role="status"><span>{message}</span><button onClick={() => setMessage('')} aria-label="Fechar aviso">×</button></div>}
     {view === 'ofertas' ? <main className="offers-content">
 
-      <div className="scrollbar mt-3 flex gap-2 overflow-x-auto pb-1">{categories.map(c => <button key={c} onClick={() => setCategory(c)} className={`chip ${category === c ? 'selected' : ''}`}>{c}</button>)}</div>
+      <CategoryBar selected={category} onSelect={setCategory} />
       <div className="my-2 flex items-center justify-between gap-2 text-xs text-[#92705c]"><div className="offer-count"><span>{groups.length} {groups.length === 1 ? 'produto' : 'produtos'}</span>{hasIrresistible && <button type="button" className={`irresistible-filter${irresistibleOnly ? ' active' : ''}`} aria-pressed={irresistibleOnly} onClick={() => setIrresistibleOnly(current => !current)}><svg className="irresistible-bolt" aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4 14h7l-1 8 10-12h-7l0-8Z"/></svg>Irresistíveis</button>}</div><div className="flex min-w-0 items-center gap-1"><select aria-label="Supermercado" value={store} onChange={e => setStore(e.target.value)} className="min-w-0 max-w-48 bg-transparent py-2 font-semibold text-[#a53f25]"><option value="">Todos os mercados</option>{Object.entries(data.stores).map(([id, value]) => <option key={id} value={id}>{value[0]}</option>)}</select></div></div>
       {!!data.pending_offers?.length && <button type="button" className="review-trigger" onClick={()=>setReviewOpen(true)}>Revisar ofertas · {data.pending_offers.length}</button>}
       <div className={gridView && groups.length ? "products-grid" : "space-y-2"}>{groups.length ? groups.slice(0,visibleCount).map(group => gridView ? <GridProduct key={group[0].product_key || group[0].id} group={group} stores={data.stores} onPreview={setPreviewImage} onHistory={setHistoryOffer} onAdd={chooseOffer} /> : <section key={group[0].product_key || group[0].id} className="overflow-hidden rounded-xl border border-[#f1dfd0] bg-white">{groupEqualPrices(group).map((storeGroup,_,allGroups) => <StorePrice key={storeGroup.key} storeGroup={storeGroup} allGroups={allGroups} stores={data.stores} onPreview={setPreviewImage} onAdd={chooseOffer} onHistory={setHistoryOffer}/>)}</section>) : <div className="rounded-xl border border-[#f1dfd0] bg-white px-4 py-12 text-center text-sm text-[#987766]">Nenhum produto encontrado.</div>}</div>
