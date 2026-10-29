@@ -189,16 +189,17 @@ export function createApp(db, storeProviders = providers, options = {}) {
       if (req.method === 'GET' && path === '/api/search') return json(db.search(requestUrl.searchParams.get('q') || ''));
       if (req.method === 'GET' && path === '/api/data') { const sources = db.db.prepare('SELECT * FROM sources').all(); for (const id of inFlight.keys()) { const existing = sources.find(s => s.store === id); if (existing) existing.state = 'running'; else sources.push({store:id,state:'running'}); } const sourceRows = db.db.prepare('SELECT * FROM store_source_status').all(); const store_sources = storeProviders.flatMap(p => (p.sourceDefinitions || []).map(def => ({store:p.id,source:def.id,name:def.name,...(sourceRows.find(row => row.store === p.id && row.source === def.id) || {state:'unknown'}),...(inFlightSources.get(p.id)?.has(def.id) ? {state:'running'} : {})}))); return json({ offers: db.offers(), lists: db.lists(), sources, store_sources, stores: Object.fromEntries(storeProviders.map(p => [p.id,[p.name,p.url]])) }); }
       if (req.method === 'POST' && path.startsWith('/api/')) {
+        const origin = req.headers.origin, site = req.headers['sec-fetch-site'];
+        if ((origin && (() => { try { const url = new URL(origin); return !['http:','https:'].includes(url.protocol) || url.host !== req.headers.host; } catch { return true; } })()) || site === 'cross-site' || site === 'same-site') return json({error:'Origem não permitida.'},403);
+        if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '')) return json({error:'Use application/json.'},415);
         let body = ''; for await (const chunk of req) { body += chunk; if (body.length > 100000) throw Error('Pedido muito grande'); }
         let data; try { data = JSON.parse(body || '{}'); } catch { throw Error('JSON inválido.'); }
         if (path === '/api/ai-config' || path === '/api/ai-models') {
-          if ((req.headers.origin && (() => { try { return new URL(req.headers.origin).host !== req.headers.host; } catch { return true; } })()) || req.headers['sec-fetch-site'] === 'cross-site') return json({error:'Origem não permitida.'},403);
           res.setHeader('Cache-Control','no-store');
           if (path === '/api/ai-config') return json(await saveConfig(data, options.aiConfigPath));
           return json({models:await listModels(await modelConfig(data, options.aiConfigPath))});
         }
         if (path === '/api/instagram-cookies') {
-          if ((req.headers.origin && (() => { try { return new URL(req.headers.origin).host !== req.headers.host; } catch { return true; } })()) || req.headers['sec-fetch-site'] === 'cross-site') return json({error:'Origem não permitida.'},403);
           if (typeof data.cookies !== 'string') throw Error('Informe o JSON dos cookies.');
           let cookies;
           try { cookies = normalizeCookies(JSON.parse(data.cookies)); } catch { throw Error('JSON inválido ou sem cookie de sessão do Instagram.'); }

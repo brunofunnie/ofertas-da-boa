@@ -1,6 +1,8 @@
 import {readFile, mkdir, writeFile, rename, unlink} from 'node:fs/promises';
 import {dirname} from 'node:path';
 import {randomUUID} from 'node:crypto';
+import {isIP} from 'node:net';
+import {isPublicAddress, outboundAgent} from './network.js';
 
 const defaultPath = () => process.env.AI_CONFIG_PATH || '.local/ai-config.json';
 const defaults = () => ({provider:'gemini',gemini:{model:'gemini-2.5-flash',api_key:''},openai:{base_url:'https://api.openai.com/v1',model:'',api_key:''}});
@@ -10,7 +12,10 @@ async function configFile(path = defaultPath()) {
 }
 function baseUrl(value) {
   let url; try {url = new URL(value);} catch {throw Error('URL do provedor inválida.');}
-  if (!['http:','https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw Error('URL do provedor inválida.');
+  const host = url.hostname.replace(/^\[|\]$/g, '');
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || (isIP(host) && !isPublicAddress(host)) || host === 'localhost' || host.endsWith('.localhost')) throw Error('URL do provedor inválida ou destino não permitido.');
+  const allowed = ['api.openai.com','api.commandcode.ai', ...(process.env.AI_ALLOWED_HOSTS || '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean)];
+  if (!allowed.includes(url.host.toLowerCase())) throw Error('Provedor de IA não autorizado no servidor.');
   return url.href.replace(/\/+$/, '');
 }
 function clean(value, label, max = 500) {
@@ -46,7 +51,7 @@ export async function listModels(config, fetcher = fetch) {
   const isGemini=config.provider==='gemini';
   if (isGemini && !config.api_key) throw Error('Informe a chave do Gemini.');
   const url=isGemini ? 'https://generativelanguage.googleapis.com/v1beta/models' : `${baseUrl(config.base_url)}/models`;
-  let res; try {res=await fetcher(url,{headers:isGemini ? {'x-goog-api-key':config.api_key} : (config.api_key ? {Authorization:`Bearer ${config.api_key}`} : {}),signal:AbortSignal.timeout(15000),redirect:'error'});}catch {throw Error('Não foi possível consultar os modelos.');}
+  let res; try {res=await fetcher(url,{headers:isGemini ? {'x-goog-api-key':config.api_key} : (config.api_key ? {Authorization:`Bearer ${config.api_key}`} : {}),signal:AbortSignal.timeout(15000),redirect:'error',dispatcher:outboundAgent});}catch {throw Error('Não foi possível consultar os modelos.');}
   if (!res.ok) throw Error(`Não foi possível consultar os modelos (HTTP ${res.status}).`);
   let data; try {data=await res.json();} catch {throw Error('Lista de modelos inválida.');} const entries=isGemini ? data.models : data.data;
   if(!Array.isArray(entries)) throw Error('Lista de modelos inválida.');
@@ -58,7 +63,7 @@ export async function readImage(config, prompt, bytes, mimeType, fetcher = fetch
   const headers={'content-type':'application/json',...(gemini?{'x-goog-api-key':config.api_key}:config.api_key?{Authorization:`Bearer ${config.api_key}`}:{})};
   const url=gemini ? `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.model)}:generateContent` : `${baseUrl(config.base_url)}/chat/completions`;
   const body=gemini ? {contents:[{parts:[{text:prompt},{inlineData:{mimeType,data:bytes.toString('base64')}}]}],generationConfig:{responseMimeType:'application/json',temperature:0}} : {model:config.model,messages:[{role:'user',content:[{type:'text',text:prompt},{type:'image_url',image_url:{url:`data:${mimeType};base64,${bytes.toString('base64')}`}}]}]};
-  let response;try {response=await fetcher(url,{method:'POST',headers,body:JSON.stringify(body),signal:AbortSignal.timeout(90000),redirect:'error'});}catch {throw Error('Não foi possível conectar ao provedor de IA.');}
+  let response;try {response=await fetcher(url,{method:'POST',headers,body:JSON.stringify(body),signal:AbortSignal.timeout(90000),redirect:'error',dispatcher:outboundAgent});}catch {throw Error('Não foi possível conectar ao provedor de IA.');}
   if(response.status===429)throw Error(`Limite de requisições do ${gemini?'Gemini':'provedor de IA'} atingido. Tente novamente mais tarde.`);
   if(!response.ok)throw Error(`Leitura do folheto indisponível (HTTP ${response.status}).`);
   let result;try {result=await response.json();} catch {throw Error('Resposta inválida do provedor de IA.');}const text=gemini?result.candidates?.[0]?.content?.parts?.map(p=>p.text || '').join(''):result.choices?.[0]?.message?.content;

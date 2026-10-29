@@ -2,17 +2,28 @@ services:
   ofertas:
     build: .
     restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:mode=1777
     env_file:
       - path: ./data/ai.env
         required: false
     environment:
       DATABASE_PATH: /data/ofertas.sqlite3
       CHROME_PATH: /usr/bin/chromium
+      HOME: /tmp
+      XDG_CONFIG_HOME: /tmp
+      XDG_CACHE_HOME: /tmp
     volumes:
       - ./data:/data
       - ./data/local:/app/.local
     networks:
-      - fry-network
+      - ofertas-network
 networks:
-  fry-network:
+  ofertas-network:
+    name: ofertas-network
     external: true
