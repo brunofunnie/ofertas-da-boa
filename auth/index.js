@@ -7,7 +7,7 @@ const token = () => randomBytes(32).toString('base64url');
 const lifetime = 30*24*60*60;
 export function isAdmin(user) { return user?.email?.toLowerCase() === ADMIN_EMAIL; }
 export function createSession(db,user) {
-  db.prepare('INSERT INTO users(id,email,name) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email,name=excluded.name').run(user.sub,user.email.toLowerCase(),user.name);
+  db.prepare('INSERT INTO users(id,email,name,picture) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email,name=excluded.name,picture=excluded.picture').run(user.sub,user.email.toLowerCase(),user.name,user.picture || null);
   if (isAdmin(user)) db.prepare("UPDATE lists SET owner_id=? WHERE owner_id='legacy-admin'").run(user.sub);
   db.prepare('DELETE FROM auth_sessions WHERE expires_at <= ?').run(Math.floor(Date.now()/1000));
   const raw=token();db.prepare('INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES(?,?,?)').run(hash(raw),user.sub,Math.floor(Date.now()/1000)+lifetime);return raw;
@@ -15,7 +15,7 @@ export function createSession(db,user) {
 export function getSession(db,req) {
   const raw=String(req.headers.cookie || '').split(';').map(x=>x.trim()).find(x=>x.startsWith('ofertas_session='))?.slice('ofertas_session='.length);
   if (!raw || !/^[A-Za-z0-9_-]{43}$/.test(raw)) return null;
-  const row=db.prepare('SELECT users.id AS sub,users.email,users.name FROM auth_sessions JOIN users ON users.id=auth_sessions.user_id WHERE token_hash=? AND expires_at>?').get(hash(raw),Math.floor(Date.now()/1000));
+  const row=db.prepare('SELECT users.id AS sub,users.email,users.name,users.picture FROM auth_sessions JOIN users ON users.id=auth_sessions.user_id WHERE token_hash=? AND expires_at>?').get(hash(raw),Math.floor(Date.now()/1000));
   return row ? {...row,admin:isAdmin(row)} : null;
 }
 export function destroySession(db,req) {
@@ -51,7 +51,9 @@ export function createGoogleAuth(options = {}) {
         if (!tokens.id_token) throw Error('Token de identidade ausente.');
         const ticket=await oauth.verifyIdToken({idToken:tokens.id_token,audience:clientId});const info=ticket.getPayload();
         if (!info || info.nonce !== attempt.nonce || info.email_verified !== true || typeof info.sub !== 'string' || !info.sub || typeof info.email !== 'string' || !info.email) throw Error('Identidade Google inválida.');
-        const user={sub:info.sub,email:info.email,name:typeof info.name==='string' ? info.name.slice(0,120) : info.email};destroySession(db,req);const session=createSession(db,user);
+        let picture = null;
+        try { const url = new URL(info.picture); if (url.protocol === 'https:' && (url.hostname === 'googleusercontent.com' || url.hostname.endsWith('.googleusercontent.com')) && url.href.length <= 2048) picture = url.href; } catch {}
+        const user={sub:info.sub,email:info.email,name:typeof info.name==='string' ? info.name.slice(0,120) : info.email,picture};destroySession(db,req);const session=createSession(db,user);
         console.log(JSON.stringify({type:'audit',at:new Date().toISOString(),action:'login-google',outcome:'ok',actor:user.sub}));
         res.writeHead(302,{'Location':'/','Set-Cookie':[cookie('ofertas_session',session,lifetime),cookie('ofertas_oauth','',0,'/auth/google/callback')],'Cache-Control':'no-store','Referrer-Policy':'no-referrer'});res.end();
       } catch (error) {console.error(JSON.stringify({type:'error',at:new Date().toISOString(),scope:'auth:google',detail:'Falha ao validar a autenticação Google.'}));res.writeHead(302,{'Location':'/?login=erro','Set-Cookie':cookie('ofertas_oauth','',0,'/auth/google/callback'),'Cache-Control':'no-store','Referrer-Policy':'no-referrer'});res.end();}
