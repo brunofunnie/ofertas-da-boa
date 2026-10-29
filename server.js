@@ -52,6 +52,7 @@ export class Database {
     const listColumns = new Set(this.db.prepare('PRAGMA table_info(lists)').all().map(c => c.name));
     if (!listColumns.has('owner_id')) this.db.exec("ALTER TABLE lists ADD COLUMN owner_id TEXT NOT NULL DEFAULT 'legacy-admin'");
     if (!itemColumns.has('quantity')) this.db.exec('ALTER TABLE items ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1');
+    if (!itemColumns.has('price_type')) this.db.exec("ALTER TABLE items ADD COLUMN price_type TEXT NOT NULL DEFAULT 'regular'");
     const columns = new Set(this.db.prepare('PRAGMA table_info(offers)').all().map(c => c.name));
     if (!columns.has('price_unit')) this.db.exec("ALTER TABLE offers ADD COLUMN price_unit TEXT NOT NULL DEFAULT 'un'");
     if (!columns.has('image_url')) this.db.exec('ALTER TABLE offers ADD COLUMN image_url TEXT');
@@ -182,8 +183,8 @@ export class Database {
     return this.offers().filter(offer => scores.has(offer.id)).sort((a, b) => scores.get(a.id) - scores.get(b.id));
   }
   createList(name, owner = 'legacy-admin') { return Number(this.db.prepare('INSERT INTO lists(name,owner_id) VALUES(?,?)').run(name, owner).lastInsertRowid); }
-  addItem(list, offer) { this.db.prepare('INSERT OR IGNORE INTO items(list_id,offer_id) VALUES(?,?)').run(list, offer); }
-  lists(owner = 'legacy-admin') { const images = this.productImages(); return this.db.prepare('SELECT id,name FROM lists WHERE owner_id=? ORDER BY id DESC').all(owner).map(l => ({ ...l, items: this.db.prepare('SELECT offers.*,items.checked,items.quantity FROM items JOIN offers ON offers.id=items.offer_id WHERE list_id=? ORDER BY checked,name').all(l.id).map(item => ({ ...item, ...(images.get(item.product_key) || { image_url: null, image_source: null }) })) })); }
+  addItem(list, offer, priceType = 'regular') { this.db.prepare('INSERT INTO items(list_id,offer_id,price_type) VALUES(?,?,?) ON CONFLICT(list_id,offer_id) DO UPDATE SET price_type=excluded.price_type').run(list, offer, priceType); }
+  lists(owner = 'legacy-admin') { const images = this.productImages(); return this.db.prepare('SELECT id,name FROM lists WHERE owner_id=? ORDER BY id DESC').all(owner).map(l => ({ ...l, items: this.db.prepare('SELECT offers.*,items.checked,items.quantity,items.price_type FROM items JOIN offers ON offers.id=items.offer_id WHERE list_id=? ORDER BY checked,name').all(l.id).map(item => ({ ...item, ...(item.price_type === 'club' ? {price:item.club_price || item.price,condition:item.club_price ? 'Clube' : 'Clube indisponível · preço normal'} : {}), ...(images.get(item.product_key) || { image_url: null, image_source: null }) })) })); }
   status(store, result) {
     this.db.prepare(`INSERT INTO sources(store,status,updated,state,last_success,total,new_count,changed_count) VALUES(?,?,CURRENT_TIMESTAMP,?,CASE WHEN ?='ok' THEN CURRENT_TIMESTAMP ELSE NULL END,?,?,?)
       ON CONFLICT(store) DO UPDATE SET status=excluded.status,updated=excluded.updated,state=excluded.state,last_success=COALESCE(excluded.last_success,sources.last_success),total=COALESCE(excluded.total,sources.total),new_count=COALESCE(excluded.new_count,sources.new_count),changed_count=COALESCE(excluded.changed_count,sources.changed_count)`)
@@ -327,7 +328,7 @@ export function createApp(db, storeProviders = providers, options = {}) {
           const result = db.db.prepare('UPDATE items SET quantity=? WHERE list_id=? AND offer_id=?').run(data.quantity, data.list_id, data.offer_id);
           return result.changes ? json({ok:true}) : json({error:'Item não encontrado'},404);
         }
-        if (path === '/api/item') { db.addItem(Number(data.list_id), Number(data.offer_id)); return json({ ok: true }); }
+        if (path === '/api/item') { const priceType = data.price_type ?? 'regular'; if (!['regular','club'].includes(priceType)) return json({error:'Condição de preço inválida.'},400); if (priceType === 'club' && !db.db.prepare('SELECT 1 FROM offers WHERE id=? AND club_price > 0').get(Number(data.offer_id))) return json({error:'Preço de clube indisponível.'},400); db.addItem(Number(data.list_id), Number(data.offer_id), priceType); return json({ ok: true }); }
         if (path === '/api/check') { db.db.prepare('UPDATE items SET checked=? WHERE list_id=? AND offer_id=?').run(data.checked ? 1 : 0, Number(data.list_id), Number(data.offer_id)); return json({ ok: true }); }
         if (path === '/api/remove') { db.db.prepare('DELETE FROM items WHERE list_id=? AND offer_id=?').run(Number(data.list_id), Number(data.offer_id)); return json({ ok: true }); }
         if (path === '/api/delete-list') { db.db.prepare('DELETE FROM lists WHERE id=?').run(Number(data.id)); return json({ ok: true }); }
