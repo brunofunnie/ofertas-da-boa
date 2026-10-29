@@ -9,6 +9,11 @@ services:
       - ALL
     tmpfs:
       - /tmp:mode=1777
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '5'
     env_file:
       - path: ./data/ai.env
         required: false

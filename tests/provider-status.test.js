@@ -40,12 +40,12 @@ test('atualização parcial salva produtos disponíveis e informa a fonte que fa
 
 test('registra e apresenta o status de cada fonte, inclusive falhas e fonte não configurada', async () => {
  const db=new Database(':memory:'); let fail=true;
- const provider={id:'teste',name:'Mercado',url:'https://example.com',sourceDefinitions:[{id:'site',name:'Site'},{id:'instagram',name:'Instagram'}],fetchWithStatus:async (_,report)=>{report({id:'site',state:'ok',total:1});report({id:'instagram',state:fail?'error':'unconfigured',status:fail?'Sessão expirada':'Não configurado'});const offers=[{name:'Arroz 5kg',price:1000}];if(fail)offers.warnings=['Instagram: Sessão expirada'];return offers;}};
+ const provider={id:'teste',name:'Mercado',url:'https://example.com',sourceDefinitions:[{id:'site',name:'Site'},{id:'instagram',name:'Instagram'}],fetchWithStatus:async (_,report)=>{report({id:'site',state:'ok',total:1});report({id:'instagram',state:fail?'error':'unconfigured',status:fail?'Sessão do Instagram expirada ou requer verificação.':'Não configurado'});const offers=[{name:'Arroz 5kg',price:1000}];if(fail)offers.warnings=['Instagram: Sessão expirada'];return offers;}};
  const server=createApp(db,[provider]);await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const base=`http://127.0.0.1:${server.address().port}`;
  const update=()=>fetch(base+'/api/refresh-store',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({store:'teste'})});
  try {
   let data=await fetch(base+'/api/data').then(r=>r.json());assert.deepEqual(data.store_sources.map(s=>s.state),['unknown','unknown']);
-  await update();data=await fetch(base+'/api/data').then(r=>r.json());assert.equal(data.store_sources[0].state,'ok');assert.equal(data.store_sources[0].total,1);assert.equal(data.store_sources[1].state,'error');assert.equal(data.store_sources[1].status,'Sessão expirada');
+  await update();data=await fetch(base+'/api/data').then(r=>r.json());assert.equal(data.store_sources[0].state,'ok');assert.equal(data.store_sources[0].total,1);assert.equal(data.store_sources[1].state,'error');assert.equal(data.store_sources[1].status,'Sessão do Instagram expirada ou requer verificação.');
   fail=false;await update();data=await fetch(base+'/api/data').then(r=>r.json());assert.equal(data.store_sources[1].state,'unconfigured');assert.equal(data.store_sources[0].state,'ok');
  }finally{await new Promise(resolve=>server.close(resolve));db.close();}
 });

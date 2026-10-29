@@ -2,8 +2,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { createServer } from 'node:http';
 import { readFile, mkdir, writeFile, rename, unlink } from 'node:fs/promises';
 import { resolve, extname, dirname } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { isIP } from 'node:net';
 import { productKey } from './matcher.js';
 import { startImageSearch } from './image-search/index.js';
 import { providers } from './providers/index.js';
@@ -34,6 +35,7 @@ export class Database {
       CREATE TABLE IF NOT EXISTS items(list_id INTEGER NOT NULL, offer_id INTEGER NOT NULL, checked INTEGER DEFAULT 0, PRIMARY KEY(list_id,offer_id), FOREIGN KEY(list_id) REFERENCES lists(id) ON DELETE CASCADE, FOREIGN KEY(offer_id) REFERENCES offers(id));
       CREATE TABLE IF NOT EXISTS sources(store TEXT PRIMARY KEY, status TEXT, updated TEXT);
       CREATE TABLE IF NOT EXISTS store_source_status(store TEXT NOT NULL, source TEXT NOT NULL, state TEXT NOT NULL, status TEXT, updated TEXT DEFAULT CURRENT_TIMESTAMP, last_success TEXT, total INTEGER, PRIMARY KEY(store,source));
+      CREATE TABLE IF NOT EXISTS pending_offers(id INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL UNIQUE, store TEXT NOT NULL, offer_json TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, reviewed_at TEXT);
       CREATE TABLE IF NOT EXISTS offer_terms(offer_id INTEGER NOT NULL REFERENCES offers(id) ON DELETE CASCADE, term TEXT NOT NULL, PRIMARY KEY(offer_id,term));
       CREATE INDEX IF NOT EXISTS offer_terms_term ON offer_terms(term, offer_id);`);
     const sourceColumns = new Set(this.db.prepare('PRAGMA table_info(sources)').all().map(c => c.name));
@@ -83,11 +85,11 @@ export class Database {
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
-  saveOffers(store, offers) {
+  saveOffers(store, offers, {transaction = true} = {}) {
     const q = this.db.prepare(`INSERT INTO offers(store,name,category,price,url,regular_price,condition,club_price,valid_until,extracted,image_url,price_unit) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(store,name) DO UPDATE SET previous_price=CASE WHEN offers.price != excluded.price THEN offers.price ELSE offers.previous_price END, price=excluded.price,category=excluded.category,url=excluded.url,regular_price=excluded.regular_price,condition=excluded.condition,club_price=excluded.club_price,valid_until=excluded.valid_until,extracted=excluded.extracted,image_url=COALESCE(NULLIF(excluded.image_url,''),offers.image_url),price_unit=excluded.price_unit,updated=CURRENT_TIMESTAMP`);
     const unique = [...new Map(offers.map(o => [o.name, o])).values()];
     const stats = {total:unique.length, new_count:0, changed_count:0};
-    this.db.exec('BEGIN');
+    if (transaction) this.db.exec('BEGIN');
     try {
       for (const o of unique) {
         const old = this.db.prepare('SELECT * FROM offers WHERE store=? AND name=?').get(store, o.name);
@@ -105,9 +107,36 @@ export class Database {
         const previous = this.db.prepare('SELECT price FROM price_history WHERE product_key=? AND store=? AND condition=? ORDER BY id DESC LIMIT 1').get(key, store, o.condition || '');
         if (!previous || previous.price !== o.price) this.db.prepare('INSERT INTO price_history(product_key,product_id,store,condition,price) VALUES(?,?,?,?,?)').run(key, productId, store, o.condition || '', o.price);
       }
-      this.db.exec('COMMIT');
+      if (transaction) this.db.exec('COMMIT');
       return stats;
-    } catch (e) { this.db.exec('ROLLBACK'); throw e; }
+    } catch (e) { if (transaction) this.db.exec('ROLLBACK'); throw e; }
+  }
+  queueOffers(store, offers) {
+    const insert = this.db.prepare('INSERT OR IGNORE INTO pending_offers(fingerprint,store,offer_json) VALUES(?,?,?)');
+    let added = 0;
+    for (const offer of offers) {
+      const normalized = {name:offer.name,price:offer.price,club_price:offer.club_price ?? null,valid_until:offer.valid_until ?? null,extracted:true,url:offer.url || ''};
+      const json = JSON.stringify(normalized), fingerprint = createHash('sha256').update(JSON.stringify([store,normalized])).digest('hex');
+      added += Number(insert.run(fingerprint,store,json).changes);
+    }
+    return added;
+  }
+  pendingOffers() {
+    return this.db.prepare("SELECT id,store,offer_json,created_at FROM pending_offers WHERE state='pending' ORDER BY id DESC").all().map(row => ({id:row.id,store:row.store,created_at:row.created_at,...JSON.parse(row.offer_json)}));
+  }
+  reviewOffer(id, decision) {
+    this.db.exec('BEGIN');
+    try {
+      const row = this.db.prepare("SELECT * FROM pending_offers WHERE id=? AND state='pending'").get(id);
+      if (!row) { this.db.exec('ROLLBACK'); return false; }
+      const offer = JSON.parse(row.offer_json);
+      const today = new Intl.DateTimeFormat('en-CA', {timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+      if (decision === 'approve' && (!offer.valid_until || offer.valid_until < today)) { this.db.exec('ROLLBACK'); return false; }
+      if (decision === 'approve') this.saveOffers(row.store, [offer], {transaction:false});
+      this.db.prepare('UPDATE pending_offers SET state=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?').run(decision === 'approve' ? 'approved' : 'rejected',id);
+      this.db.exec('COMMIT');
+      return true;
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
   productImages() {
     const images = new Map();
@@ -153,6 +182,20 @@ export class Database {
   close() { this.db.close(); }
 }
 async function fetchPage(url) { const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 OfertasDaBoa/1.0' }, signal: AbortSignal.timeout(20000) }); if (!res.ok) throw Error(`HTTP ${res.status}`); return res.text(); }
+const auditPaths = new Set(['/api/refresh-store','/api/refresh','/api/offer','/api/list','/api/rename-list','/api/quantity','/api/item','/api/check','/api/remove','/api/delete-list','/api/review-offer','/api/ai-config','/api/ai-models','/api/instagram-cookies']);
+function logError(scope, error) {
+  const detail = String(error?.stack || error?.message || error).slice(0,4000).replace(/(https?:\/\/[^\s?]+)\?[^\s]*/gi,'$1?[redacted]').replace(/\b(?:sk-|gh[pousr]_)[A-Za-z0-9_-]{12,}/g,'[redacted]').replace(/(Bearer\s+)[^\s]+/gi,'$1[redacted]');
+  console.error(JSON.stringify({type:'error',at:new Date().toISOString(),scope,detail}));
+}
+function sourceError(message) {
+  const safe = ['Limite de requisições do Gemini atingido. Tente novamente mais tarde.','Limite de requisições do provedor de IA atingido. Tente novamente mais tarde.','Sessão do Instagram expirada ou requer verificação.','Instagram demorou para abrir a publicação. Tente atualizar novamente.'];
+  return safe.includes(message) ? message : 'Não foi possível atualizar a fonte.';
+}
+function safeStoredStatus(source) {
+  if (source.state !== 'error') return source;
+  if (source.status?.startsWith('Atualização parcial:')) return {...source,status:'Atualização parcial: verifique as fontes.'};
+  return {...source,status:`Não atualizado: ${sourceError(source.status?.replace(/^Não atualizado:\s*/, ''))}`};
+}
 
 export function createApp(db, storeProviders = providers, options = {}) {
   const inFlight = new Map();
@@ -163,16 +206,25 @@ export function createApp(db, storeProviders = providers, options = {}) {
     const work = (async () => {
       try {
         const report = result => {
+          if (result.state === 'error') { logError(`source:${provider.id}:${result.id}`,result.status); result = {...result,status:sourceError(result.status)}; }
           db.db.prepare(`INSERT INTO store_source_status(store,source,state,status,updated,last_success,total) VALUES(?,?,?,?,CURRENT_TIMESTAMP,CASE WHEN ?='ok' THEN CURRENT_TIMESTAMP ELSE NULL END,?) ON CONFLICT(store,source) DO UPDATE SET state=excluded.state,status=excluded.status,updated=excluded.updated,last_success=COALESCE(excluded.last_success,store_source_status.last_success),total=excluded.total`).run(provider.id,result.id,result.state,result.status || '',result.state,result.total ?? null);
           inFlightSources.get(provider.id)?.delete(result.id);
         };
         const offers = provider.fetchWithStatus ? await provider.fetchWithStatus(fetchPage, report) : await provider.fetchOffers(fetchPage);
         if (!offers.length) throw Error('Nenhum produto encontrado.');
-        const stats = db.saveOffers(provider.id, offers);
+        const extracted = offers.filter(offer => offer.extracted), regular = offers.filter(offer => !offer.extracted);
+        db.db.exec('BEGIN');
+        let stats, pending;
+        try { stats = db.saveOffers(provider.id, regular, {transaction:false}); pending = db.queueOffers(provider.id, extracted); db.db.exec('COMMIT'); }
+        catch (error) { db.db.exec('ROLLBACK'); throw error; }
+        stats.total += extracted.length;
         const warnings = offers.warnings || [];
-        return db.status(provider.id, {state:warnings.length ? 'error' : 'ok',status:warnings.length ? `Atualização parcial: ${warnings.join('; ')}` : `${stats.total} produtos atualizados`,...stats});
+        if (warnings.length) for (const warning of warnings) logError(`source:${provider.id}`,warning);
+        const warningNames = [...new Set(warnings.map(w => /^Instagram:/i.test(w) ? 'Instagram' : /^Site:/i.test(w) ? 'Site' : 'fonte'))].join(', ');
+        return db.status(provider.id, {state:warnings.length ? 'error' : 'ok',status:warnings.length ? `Atualização parcial: ${warningNames} indisponível` : `${stats.total} produtos consultados${pending ? ` · ${pending} para revisão` : ''}`,...stats});
       } catch (error) {
-        return db.status(provider.id, {state:'error',status:`Não atualizado: ${error.message}`});
+        logError(`refresh:${provider.id}`,error);
+        return db.status(provider.id, {state:'error',status:`Não atualizado: ${sourceError(error.message)}`});
       }
     })();
     inFlight.set(provider.id, work);
@@ -181,19 +233,27 @@ export function createApp(db, storeProviders = providers, options = {}) {
   };
   const stopImageSearch = startImageSearch(db);
   const server = createServer(async (req, res) => {
-    const json = (data, status = 200) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(data)); };
+    let auditDetails = {}, auditOutcome;
+    const json = (data, status = 200) => { if (data?.state) auditOutcome = data.state; res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(data)); };
     try {
       const requestUrl = new URL(req.url, 'http://localhost');
       const path = requestUrl.pathname;
+      if (req.method === 'POST' && auditPaths.has(path)) {
+        const client = req.headers['cf-connecting-ip'];
+        res.once('finish', () => console.log(JSON.stringify({type:'audit',at:new Date().toISOString(),action:path.slice(5),status:res.statusCode,outcome:auditOutcome || (res.statusCode < 400 ? 'ok' : 'error'),actor:'sem-autenticacao',client_ip:typeof client === 'string' && isIP(client) ? client : req.socket.remoteAddress || null,...auditDetails})));
+      }
       if (req.method === 'GET' && path === '/api/ai-config') { res.setHeader('Cache-Control','no-store'); return json(await publicConfig(options.aiConfigPath)); }
       if (req.method === 'GET' && path === '/api/search') return json(db.search(requestUrl.searchParams.get('q') || ''));
-      if (req.method === 'GET' && path === '/api/data') { const sources = db.db.prepare('SELECT * FROM sources').all(); for (const id of inFlight.keys()) { const existing = sources.find(s => s.store === id); if (existing) existing.state = 'running'; else sources.push({store:id,state:'running'}); } const sourceRows = db.db.prepare('SELECT * FROM store_source_status').all(); const store_sources = storeProviders.flatMap(p => (p.sourceDefinitions || []).map(def => ({store:p.id,source:def.id,name:def.name,...(sourceRows.find(row => row.store === p.id && row.source === def.id) || {state:'unknown'}),...(inFlightSources.get(p.id)?.has(def.id) ? {state:'running'} : {})}))); return json({ offers: db.offers(), lists: db.lists(), sources, store_sources, stores: Object.fromEntries(storeProviders.map(p => [p.id,[p.name,p.url]])) }); }
+      if (req.method === 'GET' && path === '/api/data') { const sources = db.db.prepare('SELECT * FROM sources').all().map(safeStoredStatus); for (const id of inFlight.keys()) { const existing = sources.find(s => s.store === id); if (existing) existing.state = 'running'; else sources.push({store:id,state:'running'}); } const sourceRows = db.db.prepare('SELECT * FROM store_source_status').all().map(row => row.state === 'error' ? {...row,status:sourceError(row.status)} : row); const store_sources = storeProviders.flatMap(p => (p.sourceDefinitions || []).map(def => ({store:p.id,source:def.id,name:def.name,...(sourceRows.find(row => row.store === p.id && row.source === def.id) || {state:'unknown'}),...(inFlightSources.get(p.id)?.has(def.id) ? {state:'running'} : {})}))); return json({ offers: db.offers(), pending_offers:db.pendingOffers(), lists: db.lists(), sources, store_sources, stores: Object.fromEntries(storeProviders.map(p => [p.id,[p.name,p.url]])) }); }
       if (req.method === 'POST' && path.startsWith('/api/')) {
         const origin = req.headers.origin, site = req.headers['sec-fetch-site'];
         if ((origin && (() => { try { const url = new URL(origin); return !['http:','https:'].includes(url.protocol) || url.host !== req.headers.host; } catch { return true; } })()) || site === 'cross-site' || site === 'same-site') return json({error:'Origem não permitida.'},403);
         if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '')) return json({error:'Use application/json.'},415);
         let body = ''; for await (const chunk of req) { body += chunk; if (body.length > 100000) throw Error('Pedido muito grande'); }
         let data; try { data = JSON.parse(body || '{}'); } catch { throw Error('JSON inválido.'); }
+        if (storeProviders.some(provider => provider.id === data.store)) auditDetails.store = data.store;
+        for (const key of ['id','list_id','offer_id']) if (Number.isSafeInteger(data[key]) && data[key] > 0) auditDetails[key] = data[key];
+        if (path === '/api/review-offer' && ['approve','reject'].includes(data.decision)) auditDetails.decision = data.decision;
         if (path === '/api/ai-config' || path === '/api/ai-models') {
           res.setHeader('Cache-Control','no-store');
           if (path === '/api/ai-config') return json(await saveConfig(data, options.aiConfigPath));
@@ -221,6 +281,11 @@ export function createApp(db, storeProviders = providers, options = {}) {
           for (const provider of storeProviders) results[provider.id] = (await refreshOne(provider)).status;
           return json(results);
         }
+        if (path === '/api/review-offer') {
+          if (!Number.isSafeInteger(data.id) || data.id < 1 || !['approve','reject'].includes(data.decision)) return json({error:'Informe uma decisão válida.'},400);
+          if (!db.reviewOffer(data.id, data.decision)) return json({error:'Oferta indisponível ou vencida.'},409);
+          return json({ok:true});
+        }
         if (path === '/api/offer') { const name = String(data.name || '').trim(), price = parsePrice(data.price); if (!name || !STORES[data.store] || !price) throw Error('Informe produto, supermercado e preço válido.'); db.saveOffers(data.store, [{ name, price, category: data.category, url: STORES[data.store][1] }]); return json({ ok: true }); }
         if (path === '/api/list') { const name = String(data.name || '').trim(); if (!name) throw Error('Informe o nome da lista.'); return json({ id: db.createList(name) }); }
         if (path === '/api/rename-list') {
@@ -245,7 +310,7 @@ export function createApp(db, storeProviders = providers, options = {}) {
       const root = resolve('dist'), file = resolve(root, name);
       if (!file.startsWith(root + '/')) return json({ error: 'Não encontrado' }, 404);
       try { const content = await readFile(file); res.writeHead(200, { 'Content-Type': ({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml'})[extname(file)] || 'application/octet-stream' }); res.end(content); } catch { json({ error: 'Arquivo não encontrado. Execute npm run build.' }, 404); }
-    } catch (e) { json({ error: e.message }, 400); }
+    } catch (e) { logError('request',e); json({ error:'Não foi possível concluir a solicitação. Verifique os dados e tente novamente.' }, 400); }
   });
   server.stopImageSearch = stopImageSearch;
   server.once('close', stopImageSearch);
