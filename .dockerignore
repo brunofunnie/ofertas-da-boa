@@ -4,4 +4,5 @@ dist
 data
 *.sqlite3*
 .git
+client_secret*.json
 __pycache__

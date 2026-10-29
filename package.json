@@ -8,7 +8,8 @@
     "server": "node server.js",
     "build": "vite build",
     "start": "node server.js",
-    "test": "node --test tests/*.test.js providers/*/*.test.js ai/*.test.js"
+    "test": "node --test tests/*.test.js providers/*/*.test.js ai/*.test.js",
+    "dev:infisical": "node scripts/infisical-run.js dev node_modules/.bin/vite --host 0.0.0.0"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.0",
