@@ -21,3 +21,21 @@ test('não inicia com autenticação ou segredo indisponível', async () => {
   let calls = 0;
   await assert.rejects(googleCredentials('prod', {}, async () => ++calls === 1 ? {ok:true,json:async()=>({accessToken:'token'})} : {ok:false,status:404}), /Infisical/);
 });
+
+test('carrega o login local a partir da identidade do Infisical', async () => {
+  const { loadDevGoogleAuth } = await import('../scripts/infisical-run.js');
+  const { mkdtemp, writeFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = await mkdtemp(join(tmpdir(), 'ofertas-infisical-'));
+  try {
+    const file = join(dir, 'identity');
+    await writeFile(file, 'INFISICAL_CLIENT_ID=identity\nINFISICAL_CLIENT_SECRET=key\n');
+    let calls = 0;
+    const fetcher = async () => ++calls === 1
+      ? { ok: true, json: async () => ({ accessToken: 'token' }) }
+      : { ok: true, json: async () => ({ secret: { secretValue: calls === 2 ? 'id' : 'secret' } }) };
+    assert.deepEqual(await loadDevGoogleAuth(file, fetcher), { clientId: 'id', clientSecret: 'secret', redirectUri: 'http://localhost:5173/auth/google/callback' });
+    assert.equal(await loadDevGoogleAuth(join(dir, 'missing')), undefined);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import { parseEnv } from 'node:util';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,6 +29,14 @@ export async function googleCredentials(environment, identity, fetcher = fetch) 
     result[key] = secret.secretValue;
   }
   return result;
+}
+
+export async function loadDevGoogleAuth(path = resolve(homedir(), '.config/infisical/homelab.ua.env'), fetcher = fetch) {
+  let contents;
+  try { contents = await readFile(path, 'utf8'); }
+  catch (error) { if (error.code === 'ENOENT') return undefined; throw error; }
+  const credentials = await googleCredentials('dev', parseEnv(contents), fetcher);
+  return { clientId: credentials.GOOGLE_CLIENT_ID, clientSecret: credentials.GOOGLE_CLIENT_SECRET, redirectUri: 'http://localhost:5173/auth/google/callback' };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
