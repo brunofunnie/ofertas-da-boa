@@ -12,6 +12,8 @@ Acesse http://localhost:8000 ou, no celular, o IP do computador na mesma rede co
 
 ## Login com Google
 
+O filtro **Irresistíveis** aparece quando há descontos iguais ou superiores ao limite configurado pelo administrador em **Configurações** (20% por padrão). O cálculo usa preços promocionais anunciados, inclusive preço de clube, sem tratar variações do histórico como promoções.
+
 A busca e as ofertas são públicas. Para criar e gerenciar listas, o usuário precisa entrar com o Google; cada conta acessa somente suas listas. O e-mail verificado `brunodeoliveira@gmail.com` é administrador. As listas anteriores são vinculadas a essa conta no primeiro login.
 
 No Google Cloud Console, configure a tela de consentimento e crie um cliente OAuth de tipo **Aplicativo da Web**. Cadastre a origem `https://ofertas.funnie.dev` e o URI de redirecionamento `https://ofertas.funnie.dev/auth/google/callback`. Em modo de teste, inclua as contas autorizadas como usuários de teste.

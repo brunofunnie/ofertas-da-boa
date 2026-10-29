@@ -34,6 +34,7 @@ export class Database {
       CREATE TABLE IF NOT EXISTS offers(id INTEGER PRIMARY KEY, store TEXT NOT NULL, name TEXT NOT NULL, category TEXT NOT NULL, price INTEGER NOT NULL, previous_price INTEGER, url TEXT, updated TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(store,name));
       CREATE TABLE IF NOT EXISTS lists(id INTEGER PRIMARY KEY, name TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, email TEXT NOT NULL, name TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY, value INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS auth_sessions(token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS items(list_id INTEGER NOT NULL, offer_id INTEGER NOT NULL, checked INTEGER DEFAULT 0, PRIMARY KEY(list_id,offer_id), FOREIGN KEY(list_id) REFERENCES lists(id) ON DELETE CASCADE, FOREIGN KEY(offer_id) REFERENCES offers(id));
       CREATE TABLE IF NOT EXISTS sources(store TEXT PRIMARY KEY, status TEXT, updated TEXT);
@@ -189,8 +190,8 @@ export class Database {
   close() { this.db.close(); }
 }
 async function fetchPage(url) { const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 OfertasDaBoa/1.0' }, signal: AbortSignal.timeout(20000) }); if (!res.ok) throw Error(`HTTP ${res.status}`); return res.text(); }
-const auditPaths = new Set(['/api/refresh-store','/api/refresh','/api/offer','/api/list','/api/rename-list','/api/quantity','/api/item','/api/check','/api/remove','/api/delete-list','/api/review-offer','/api/ai-config','/api/ai-models','/api/instagram-cookies','/api/logout']);
-const adminPaths = new Set(['/api/refresh-store','/api/refresh','/api/offer','/api/review-offer','/api/ai-config','/api/ai-models','/api/instagram-cookies']);
+const auditPaths = new Set(['/api/refresh-store','/api/refresh','/api/offer','/api/list','/api/rename-list','/api/quantity','/api/item','/api/check','/api/remove','/api/delete-list','/api/review-offer','/api/ai-config','/api/ai-models','/api/instagram-cookies','/api/offer-settings','/api/logout']);
+const adminPaths = new Set(['/api/refresh-store','/api/refresh','/api/offer','/api/review-offer','/api/ai-config','/api/ai-models','/api/instagram-cookies','/api/offer-settings']);
 const listPaths = new Set(['/api/list','/api/rename-list','/api/quantity','/api/item','/api/check','/api/remove','/api/delete-list']);
 function logError(scope, error) {
   const detail = String(error?.stack || error?.message || error).slice(0,4000).replace(/(https?:\/\/[^\s?]+)\?[^\s]*/gi,'$1?[redacted]').replace(/\b(?:sk-|gh[pousr]_)[A-Za-z0-9_-]{12,}/g,'[redacted]').replace(/(Bearer\s+)[^\s]+/gi,'$1[redacted]');
@@ -257,7 +258,7 @@ export function createApp(db, storeProviders = providers, options = {}) {
       }
       if (req.method === 'GET' && path === '/api/ai-config') { if (!user?.admin) return json({error:'Acesso restrito.'},user ? 403 : 401); res.setHeader('Cache-Control','no-store'); return json(await publicConfig(options.aiConfigPath)); }
       if (req.method === 'GET' && path === '/api/search') return json(db.search(requestUrl.searchParams.get('q') || ''));
-      if (req.method === 'GET' && path === '/api/data') { res.setHeader('Cache-Control','no-store'); res.setHeader('Vary','Cookie'); const sources = db.db.prepare('SELECT * FROM sources').all().map(safeStoredStatus); for (const id of inFlight.keys()) { const existing = sources.find(s => s.store === id); if (existing) existing.state = 'running'; else sources.push({store:id,state:'running'}); } const sourceRows = db.db.prepare('SELECT * FROM store_source_status').all().map(row => row.state === 'error' ? {...row,status:sourceError(row.status)} : row); const store_sources = storeProviders.flatMap(p => (p.sourceDefinitions || []).map(def => ({store:p.id,source:def.id,name:def.name,...(sourceRows.find(row => row.store === p.id && row.source === def.id) || {state:'unknown'}),...(inFlightSources.get(p.id)?.has(def.id) ? {state:'running'} : {})}))); return json({ offers: db.offers(), pending_offers:user?.admin ? db.pendingOffers() : [], lists:user ? db.lists(user.sub) : [], user:user ? {name:user.name,email:user.email,picture:user.picture,admin:!!user.admin} : null, login_available:google.available, sources, store_sources, stores: Object.fromEntries(storeProviders.map(p => [p.id,[p.name,p.url]])) }); }
+      if (req.method === 'GET' && path === '/api/data') { res.setHeader('Cache-Control','no-store'); res.setHeader('Vary','Cookie'); const sources = db.db.prepare('SELECT * FROM sources').all().map(safeStoredStatus); for (const id of inFlight.keys()) { const existing = sources.find(s => s.store === id); if (existing) existing.state = 'running'; else sources.push({store:id,state:'running'}); } const sourceRows = db.db.prepare('SELECT * FROM store_source_status').all().map(row => row.state === 'error' ? {...row,status:sourceError(row.status)} : row); const store_sources = storeProviders.flatMap(p => (p.sourceDefinitions || []).map(def => ({store:p.id,source:def.id,name:def.name,...(sourceRows.find(row => row.store === p.id && row.source === def.id) || {state:'unknown'}),...(inFlightSources.get(p.id)?.has(def.id) ? {state:'running'} : {})}))); return json({ irresistible_percent:db.db.prepare("SELECT value FROM app_settings WHERE key='irresistible_percent'").get()?.value ?? 20, offers: db.offers(), pending_offers:user?.admin ? db.pendingOffers() : [], lists:user ? db.lists(user.sub) : [], user:user ? {name:user.name,email:user.email,picture:user.picture,admin:!!user.admin} : null, login_available:google.available, sources, store_sources, stores: Object.fromEntries(storeProviders.map(p => [p.id,[p.name,p.url]])) }); }
       if (req.method === 'POST' && path.startsWith('/api/')) {
         const origin = req.headers.origin, site = req.headers['sec-fetch-site'];
         if ((origin && (() => { try { const url = new URL(origin); return !['http:','https:'].includes(url.protocol) || url.host !== req.headers.host; } catch { return true; } })()) || site === 'cross-site' || site === 'same-site') return json({error:'Origem não permitida.'},403);
@@ -274,6 +275,11 @@ export function createApp(db, storeProviders = providers, options = {}) {
           res.setHeader('Cache-Control','no-store');
           if (path === '/api/ai-config') return json(await saveConfig(data, options.aiConfigPath));
           return json({models:await listModels(await modelConfig(data, options.aiConfigPath))});
+        }
+        if (path === '/api/offer-settings') {
+          if (!Number.isInteger(data.irresistible_percent) || data.irresistible_percent < 1 || data.irresistible_percent > 100) return json({error:'Informe um percentual inteiro entre 1 e 100.'},400);
+          db.db.prepare("INSERT INTO app_settings(key,value) VALUES('irresistible_percent',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(data.irresistible_percent);
+          return json({ok:true});
         }
         if (path === '/api/instagram-cookies') {
           if (typeof data.cookies !== 'string') throw Error('Informe o JSON dos cookies.');

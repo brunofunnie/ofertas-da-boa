@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './style.css';
 import { groupListItems } from './list-groups.js';
 import { priceTrend, chartPoints } from './price-history.js';
+import { isIrresistible } from './irresistible.js';
 
 const categories = ['Todos', 'Carnes', 'Hortifruti', 'Mercearia', 'Limpeza', 'Higiene', 'Frios e laticínios', 'Padaria', 'Bebidas'];
 const PAGE_SIZE = 24;
@@ -13,12 +14,22 @@ async function post(path, data = {}) {
   if (!response.ok) throw Error(result.error);
   return result;
 }
-function AccountMenu({ user, onLogout }) {
+function AccountMenu({ user, onLogout, onSettings }) {
   const menu = useRef(null);
   return <details ref={menu} className="account-menu" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }} onKeyDown={event => { if (event.key === 'Escape') { menu.current.open = false; menu.current.querySelector('summary')?.focus(); } }}>
     <summary className="account-avatar" aria-label="Menu da conta" title={user.name}><span aria-hidden="true">{(user.name || user.email || '?').trim().charAt(0).toLocaleUpperCase()}</span>{user.picture && <img src={user.picture} alt="" referrerPolicy="no-referrer" onError={event => { event.currentTarget.hidden = true; }}/>}</summary>
-    <div className="account-popover"><button type="button" onClick={() => { menu.current.open = false; onLogout(); }}>Sair</button></div>
+    <div className="account-popover">{user.admin && <button type="button" onClick={() => { menu.current.open = false; onSettings(); }}>Configurações</button>}<button type="button" onClick={() => { menu.current.open = false; onLogout(); }}>Sair</button></div>
   </details>;
+}
+function OfferSettingsDialog({ percent, onClose, onSaved }) {
+  const dialog = useRef(null), [value, setValue] = useState(String(percent)), [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  useEffect(() => { dialog.current.showModal(); }, []);
+  async function save(event) {
+    event.preventDefault(); setBusy(true); setError('');
+    try { await post('offer-settings', { irresistible_percent: Number(value) }); await onSaved(); dialog.current.close(); }
+    catch (e) { setError(e.message); } finally { setBusy(false); }
+  }
+  return <dialog ref={dialog} className="cookies-dialog" aria-labelledby="offer-settings-title" onClose={onClose} onClick={event => { if (event.target === dialog.current && !busy) dialog.current.close(); }}><form className="cookies-panel ai-panel" onSubmit={save}><div className="stores-heading"><h2 id="offer-settings-title">Configurações</h2><button type="button" className="icon" aria-label="Fechar" disabled={busy} onClick={() => dialog.current.close()}>×</button></div><label htmlFor="irresistible-percent">Desconto mínimo para ofertas irresistíveis (%)</label><input id="irresistible-percent" type="number" min="1" max="100" step="1" value={value} onChange={event => setValue(event.target.value)} required /><button className="primary" type="submit" disabled={busy}>Salvar</button>{error && <p className="store-error" role="alert">{error}</p>}</form></dialog>;
 }
 function ProductImage({ src, name, onOpen }) {
   const [failed, setFailed] = useState(false);
@@ -106,12 +117,13 @@ function GridProduct({group, stores, onPreview, onAdd, onHistory}) {
 }
 function App() {
   const [data, setData] = useState({ offers: [], lists: [], sources: [], stores: {}, user:null });
+  const [irresistibleOnly, setIrresistibleOnly] = useState(false), [settingsOpen, setSettingsOpen] = useState(false);
   const [view, setView] = useState('ofertas'), [category, setCategory] = useState('Todos'), [query, setQuery] = useState(''), [store, setStore] = useState('');
   const [searchResults, setSearchResults] = useState(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const moreOffers = useRef(null);
-  useEffect(() => { setVisibleCount(PAGE_SIZE); }, [category, store, query]);
+  useEffect(() => { setVisibleCount(PAGE_SIZE); }, [category, store, query, irresistibleOnly]);
   const [gridView, setGridView] = useState(() => { try {return localStorage.getItem('offers-view') === 'grid';} catch {return false;} });
   function toggleGrid() {setGridView(current => {const next=!current;try {localStorage.setItem('offers-view',next?'grid':'list');} catch {}return next;});}
   const [showTop, setShowTop] = useState(false);
@@ -158,7 +170,10 @@ function App() {
   }
   async function createList(e) { e.preventDefault(); const form = e.currentTarget; await action(async () => { const result = await post('list', { name: new FormData(form).get('name') }); if (selected) await post('item', { list_id: result.id, offer_id: selected }); setActiveListId(result.id); setSelected(null); setModal(''); }); }
   const matchingKeys = query.trim() ? new Set((searchResults || []).map(o => o.product_key || `offer:${o.id}`)) : null;
-  const offers = data.offers.filter(o => (category === 'Todos' || o.category === category) && (!store || o.store === store) && (!matchingKeys || matchingKeys.has(o.product_key || `offer:${o.id}`)));
+  const threshold = data.irresistible_percent ?? 20;
+  const hasIrresistible = data.offers.some(offer => isIrresistible(offer, threshold));
+  useEffect(() => { if (!hasIrresistible) setIrresistibleOnly(false); }, [hasIrresistible]);
+  const offers = data.offers.filter(o => (!irresistibleOnly || isIrresistible(o, threshold)) && (category === 'Todos' || o.category === category) && (!store || o.store === store) && (!matchingKeys || matchingKeys.has(o.product_key || `offer:${o.id}`)));
   const groups = [...offers.reduce((map, offer) => {
     const key = offer.product_key || `offer:${offer.id}`;
     if (!map.has(key)) map.set(key, new Map());
@@ -176,7 +191,7 @@ function App() {
   const listGroups = activeList ? groupListItems(activeList.items, data.stores) : [];
   const listTotal = listGroups.reduce((sum, group) => sum + group.total, 0);
   return <div className="mx-auto min-h-screen max-w-3xl px-4 pb-12 sm:px-6">
-    <div className="app-header"><header className="flex h-[52px] items-center justify-between border-b border-[#f3ded0]"><div className="flex items-center gap-2.5"><img src="/logo.svg" alt="" width="32" height="32" className="size-8 shrink-0" /><h1 className="text-lg font-bold tracking-tight">Ofertas da Boa</h1></div><div className="header-actions">{data.user?.admin && <><button type="button" className="ai-trigger" onClick={() => setAiOpen(true)} aria-label="Configurar provedor de IA" title="Configurar IA">IA</button><button className="icon" onClick={refresh} disabled={busy} aria-label="Atualizar preços" title="Atualizar preços">↻</button></>}{data.user ? <AccountMenu user={data.user} onLogout={logout} /> : <a href="/auth/google" onClick={startLogin} className="account-button">Entrar</a>}</div></header>
+    <div className="app-header"><header className="flex h-[52px] items-center justify-between border-b border-[#f3ded0]"><div className="flex items-center gap-2.5"><img src="/logo.svg" alt="" width="32" height="32" className="size-8 shrink-0" /><h1 className="text-lg font-bold tracking-tight">Ofertas da Boa</h1></div><div className="header-actions">{data.user?.admin && <><button type="button" className="ai-trigger" onClick={() => setAiOpen(true)} aria-label="Configurar provedor de IA" title="Configurar IA">IA</button><button className="icon" onClick={refresh} disabled={busy} aria-label="Atualizar preços" title="Atualizar preços">↻</button></>}{data.user ? <AccountMenu user={data.user} onLogout={logout} onSettings={() => setSettingsOpen(true)} /> : <a href="/auth/google" onClick={startLogin} className="account-button">Entrar</a>}</div></header>
     <nav className="flex items-center gap-5 border-b border-[#f3ded0]" aria-label="Navegação">{[['ofertas','Ofertas'],['listas',`Listas (${data.lists.length})`]].map(([id,label]) => <button key={id} className={`tab ${view === id ? 'active' : ''}`} onClick={() => setView(id)}>{label}</button>)}<div className="nav-actions">{view === 'ofertas' && <button type="button" className="search-trigger" ref={searchTrigger} aria-label={searchOpen ? 'Fechar busca' : 'Abrir busca'} aria-expanded={searchOpen} onClick={() => { if (searchOpen) closeSearch(); else setSearchOpen(true); }}><SearchIcon /></button>}{view === 'ofertas' && <button type="button" className="search-trigger" onClick={toggleGrid} aria-pressed={gridView} aria-label={gridView ? 'Mostrar em lista' : 'Mostrar em grade'} title={gridView ? 'Mostrar em lista' : 'Mostrar em grade'}><ViewIcon grid={gridView}/></button>}<button type="button" className="stores-trigger" onClick={() => setStoresOpen(true)} aria-label="Supermercados e atualizações" title="Supermercados"><StoreIcon /></button></div></nav>
       {view === 'ofertas' && searchOpen && <div className="search-dock"><div className="search flex min-w-0 items-center gap-2"><SearchIcon /><input autoFocus value={query} onChange={e => { setSearchResults(null); setQuery(e.target.value); }} onKeyDown={e => { if (e.key === 'Escape') closeSearch(); }} placeholder="Buscar produto" aria-label="Buscar produto" className="w-full min-w-0 outline-none" /><button className="search-close" type="button" aria-label="Fechar busca" onClick={closeSearch}>×</button></div></div>}
     </div>
@@ -184,7 +199,7 @@ function App() {
     {view === 'ofertas' ? <main className="offers-content">
 
       <div className="scrollbar mt-3 flex gap-2 overflow-x-auto pb-1">{categories.map(c => <button key={c} onClick={() => setCategory(c)} className={`chip ${category === c ? 'selected' : ''}`}>{c}</button>)}</div>
-      <div className="my-2 flex items-center justify-between gap-2 text-xs text-[#92705c]"><span>{groups.length} {groups.length === 1 ? 'produto' : 'produtos'}</span><div className="flex min-w-0 items-center gap-1"><select aria-label="Supermercado" value={store} onChange={e => setStore(e.target.value)} className="min-w-0 max-w-48 bg-transparent py-2 font-semibold text-[#a53f25]"><option value="">Todos os mercados</option>{Object.entries(data.stores).map(([id, value]) => <option key={id} value={id}>{value[0]}</option>)}</select></div></div>
+      <div className="my-2 flex items-center justify-between gap-2 text-xs text-[#92705c]"><div className="offer-count"><span>{groups.length} {groups.length === 1 ? 'produto' : 'produtos'}</span>{hasIrresistible && <button type="button" className={`irresistible-filter${irresistibleOnly ? ' active' : ''}`} aria-pressed={irresistibleOnly} onClick={() => setIrresistibleOnly(current => !current)}><svg className="irresistible-bolt" aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 4 14h7l-1 8 10-12h-7l0-8Z"/></svg>Irresistíveis</button>}</div><div className="flex min-w-0 items-center gap-1"><select aria-label="Supermercado" value={store} onChange={e => setStore(e.target.value)} className="min-w-0 max-w-48 bg-transparent py-2 font-semibold text-[#a53f25]"><option value="">Todos os mercados</option>{Object.entries(data.stores).map(([id, value]) => <option key={id} value={id}>{value[0]}</option>)}</select></div></div>
       {!!data.pending_offers?.length && <button type="button" className="review-trigger" onClick={()=>setReviewOpen(true)}>Revisar ofertas · {data.pending_offers.length}</button>}
       <div className={gridView && groups.length ? "products-grid" : "space-y-2"}>{groups.length ? groups.slice(0,visibleCount).map(group => gridView ? <GridProduct key={group[0].product_key || group[0].id} group={group} stores={data.stores} onPreview={setPreviewImage} onHistory={setHistoryOffer} onAdd={chooseOffer} /> : <section key={group[0].product_key || group[0].id} className="overflow-hidden rounded-xl border border-[#f1dfd0] bg-white">
         {group.length > 1 && <div className="border-b border-[#f7e9de] px-3 py-2 text-xs font-semibold text-[#a53f25]">{group[0].name} · {group.length} ofertas</div>}
@@ -200,6 +215,7 @@ function App() {
       </> : <div className="rounded-xl border border-[#f1dfd0] bg-white px-4 py-12 text-center text-sm text-[#987766]">Nenhuma lista criada.</div>}
     </main>}
     {showTop && <button type="button" className={`scroll-top ${view === 'listas' && activeList ? 'in-list-footer' : ''}`} aria-label="Voltar ao topo" onClick={() => window.scrollTo({top:0, behavior:'instant'})}><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>}
+    {settingsOpen && data.user?.admin && <OfferSettingsDialog percent={threshold} onClose={() => setSettingsOpen(false)} onSaved={async () => { await load(); setToast('Configuração salva'); }}/>}
     {aiOpen && <AiSettingsDialog onClose={() => setAiOpen(false)} onSaved={() => setToast('Configuração de IA salva')}/>}
     {reviewOpen && <ReviewDialog offers={data.pending_offers || []} currentOffers={data.offers} stores={data.stores} onClose={()=>setReviewOpen(false)} onReview={async (id,decision)=>{await post('review-offer',{id,decision});await load();}}/>}
     {storesOpen && <StoresDialog data={data} refreshing={refreshing} onRefresh={refreshStore} onClose={() => setStoresOpen(false)} toast={toast} />}
