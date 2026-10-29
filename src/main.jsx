@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { faGear } from '@fortawesome/free-solid-svg-icons';
 import './style.css';
 import { groupListItems } from './list-groups.js';
 import { priceTrend, chartPoints } from './price-history.js';
@@ -61,7 +62,7 @@ function ImageLightbox({ image, onClose }) {
 function SearchIcon() { return <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg>; }
 function PriceFilterIcon() { return <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h9m4 0h3M4 17h3m4 0h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>; }
 function ViewIcon({grid}) { return grid ? <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h2M10 6h10M4 12h2M10 12h10M4 18h2M10 18h10"/></svg> : <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg>; }
-function AdminIcon() { return <svg aria-hidden="true" width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M9.8 2h4.4l.5 2.4c.6.2 1.1.4 1.6.7l2.1-1.3 3.1 3.1-1.3 2.1c.3.5.5 1 .7 1.6l2.4.5v4.4l-2.4.5c-.2.6-.4 1.1-.7 1.6l1.3 2.1-3.1 3.1-2.1-1.3c-.5.3-1 .5-1.6.7l-.5 2.4H9.8l-.5-2.4c-.6-.2-1.1-.4-1.6-.7l-2.1 1.3-3.1-3.1 1.3-2.1c-.3-.5-.5-1-.7-1.6L.7 13.7V9.3l2.4-.5c.2-.6.4-1.1.7-1.6L2.5 5.1l3.1-3.1 2.1 1.3c.5-.3 1-.5 1.6-.7Z" transform="translate(.7 .7) scale(.94)"/></svg>; }
+function AdminIcon() { return <svg aria-hidden="true" className="admin-icon" viewBox={`0 0 ${faGear.icon[0]} ${faGear.icon[1]}`}><path fill="currentColor" d={faGear.icon[4]}/></svg>; }
 
 function RefreshIcon({ spinning }) { return <svg aria-hidden="true" className={spinning ? 'refresh-spin' : ''} width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9a7 7 0 0 1 11.6-2L20 12M4 12l2.8 5A7 7 0 0 0 18.4 15"/></svg>; }
 function Toast({ text }) { return text ? <div className="store-toast" role="status">{text}</div> : null; }

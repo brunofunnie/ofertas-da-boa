@@ -12,6 +12,7 @@
     "dev:infisical": "node scripts/infisical-run.js dev node_modules/.bin/vite --host 0.0.0.0"
   },
   "dependencies": {
+    "@fortawesome/free-solid-svg-icons": "^7.3.1",
     "@tailwindcss/vite": "^4.1.0",
     "cheerio": "^1.0.0",
     "google-auth-library": "^11.3.2",
