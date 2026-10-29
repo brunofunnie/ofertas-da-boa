@@ -1,0 +1,18 @@
+services:
+  ofertas:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - path: ./data/ai.env
+        required: false
+    environment:
+      DATABASE_PATH: /data/ofertas.sqlite3
+      CHROME_PATH: /usr/bin/chromium
+    volumes:
+      - ./data:/data
+      - ./data/local:/app/.local
+    networks:
+      - fry-network
+networks:
+  fry-network:
+    external: true

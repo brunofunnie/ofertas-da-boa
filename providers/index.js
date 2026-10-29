@@ -1,0 +1,5 @@
+import * as tauste from './tauste/index.js';
+import * as santoClube from './santo-clube/index.js';
+import * as bomLugar from './bom-lugar/index.js';
+
+export const providers = [tauste, bomLugar, santoClube];

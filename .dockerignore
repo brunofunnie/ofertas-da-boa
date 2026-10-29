@@ -1,0 +1,7 @@
+node_modules
+dist
+.local
+data
+*.sqlite3*
+.git
+__pycache__

@@ -1,0 +1,33 @@
+# Ofertas da Boa
+
+Aplicação para acompanhar preços e organizar listas de compras. Requer Node.js 22.13 ou mais recente (SQLite nativo).
+
+```sh
+npm install
+npm run build
+npm start
+```
+
+Acesse http://localhost:8000 ou, no celular, o IP do computador na mesma rede com a porta 8000. Em desenvolvimento, rode `npm run dev`; o Vite inicia a API no mesmo processo. O arquivo `ofertas.sqlite3` guarda os dados e continua compatível com a versão anterior; faça backup dele para preservar suas listas.
+
+A atualização consulta a página inicial do Tauste e importa os produtos encontrados nela. O catálogo acessível nessa página é parcial. Produtos com preço anterior anunciado recebem a etiqueta “Oferta”, e os preços com selo do clube recebem a etiqueta “Clube”. Os demais são preços normais, não necessariamente promoções; preços podem variar na loja. O Bom Lugar publica folhetos em imagens. Configure um provedor de IA no cabeçalho para ler os folhetos automaticamente; por padrão, o Gemini usa `GEMINI_API_KEY` no ambiente. A leitura por IA pode errar: confira nome, preço, condições e validade no folheto. O preço principal é o comum e, quando identificado, o preço de clube aparece separadamente. Ofertas com validade vencida deixam de aparecer na busca, mas permanecem nas listas e no banco. Falhas de atualização aparecem na tela e os últimos preços ficam armazenados com a data da consulta. O agrupamento normaliza acentos, ordem das palavras, embalagem e unidades equivalentes. Ele exige quantidade explícita e palavras relevantes idênticas, preservando marca, variedade e tamanho; nomes diferentes podem não ser agrupados e uma descrição incompleta pode gerar correspondência incorreta. O histórico registra preços observados por produto, mercado e condição a partir desta versão, sem reconstruir preços antigos; o gráfico aparece após pelo menos dois preços observados. Preços de clube e sem clube são tratados como condições distintas.
+
+Cada supermercado tem uma pasta em `providers/`, com seu próprio módulo e testes. Para adicionar outro, crie um módulo com `id`, `name`, `url` e `fetchOffers(fetchPage)` e registre-o em `providers/index.js`; a função retorna produtos com nome, preço em centavos e URL. Categorias são identificadas por palavras ou escolhidas no cadastro. Testes: `npm test`.
+
+O banco mantém um cadastro de produtos compartilhado pelas ofertas e pelo histórico de preços. A migração dos registros existentes ocorre na abertura do servidor e preserva os identificadores usados nas listas. Quando a descrição não permite identificar marca e quantidade com segurança, ela permanece separada para evitar associações incorretas.
+
+Em **IA**, no cabeçalho, escolha Gemini ou um serviço compatível com a API de chat da OpenAI, configure a URL e a chave se necessária e escolha ou digite um modelo. **Listar** consulta os modelos oferecidos pelo serviço; a entrada manual continua disponível se a listagem não funcionar. O modelo precisa aceitar imagens. A configuração ativa é usada na leitura dos folhetos e posts; as imagens são enviadas ao provedor escolhido e podem gerar custos. As chaves ficam no servidor em `.local/ai-config.json` e não são devolvidas à interface. O Gemini continua usando `GEMINI_API_KEY` como alternativa à chave configurada na tela. Como o aplicativo ainda não tem login, configure-o apenas em rede e dispositivos confiáveis.
+
+O Santo Supermercados também pode importar o post mais recente de `@santosupermercados`, incluindo as imagens de carrossel. Salve o JSON de cookies exportados do Instagram em `.local/instagram-cookies.json` (arquivo privado, ignorado pelo projeto) e configure um provedor de IA no cabeçalho. Atualize o Santo na tela de supermercados para consultar as duas fontes. A leitura só cadastra ofertas com período de validade legível e vigente. A instalação usa o Google Chrome em `/usr/bin/google-chrome`; defina `CHROME_PATH` se ele estiver em outro local. Se não houver arquivo de cookies, o catálogo do Santo continua funcionando normalmente; se uma fonte falhar, a outra ainda é atualizada e o erro aparece como atualização parcial. Posts sem promoção e produto com preço são ignorados. A sessão pode expirar ou exigir verificação do Instagram.
+
+Para atualizar a sessão pelo celular ou navegador, abra **Supermercados → Santo Supermercados → Cookies do Instagram** e cole o JSON exportado. Campos extras são ignorados e o JSON salvo não é exibido novamente. O aplicativo ainda não tem autenticação: use essa função somente em uma rede e dispositivos confiáveis.
+
+Sem autenticação: execute apenas em rede confiável. A aplicação não remove automaticamente ofertas antigas nem confirma validade ou estoque; confira os preços na fonte antes de comprar.
+
+A busca usa um índice de relações entre produtos e palavras no SQLite. Ignora acentos, aceita palavras em qualquer ordem, prefixos e um erro de digitação em palavras de pelo menos quatro letras. Os filtros de setor e mercado continuam disponíveis junto com a busca.
+
+Quando faltam imagens, o servidor consulta o Open Food Facts em segundo plano, uma busca a cada 12 segundos. O nome do produto é enviado ao serviço externo; apenas correspondências conservadoras com marca e quantidade são usadas, e a fonte da foto aparece na interface. Produtos sem quantidade identificável também são pesquisados, mas a imagem só é associada quando a identificação for segura. Resultados ausentes são tentados novamente após sete dias ou quando o produto é atualizado; falhas são tentadas novamente após uma hora. Opcionalmente, configure `OFF_USER_AGENT` com identificação e contato da aplicação. As imagens do supermercado têm prioridade.
+
+O provedor Santo Supermercados consulta os produtos exibidos nos setores da página inicial e percorre o carrossel de ofertas. Preços exclusivos do aplicativo e produtos vendidos por quilo são identificados na tela. O catálogo online pode variar conforme a loja e a forma de entrega; a consulta usa o catálogo público sem loja selecionada.
+
+Na barra de abas, o painel de supermercados mostra o resultado da última tentativa e permite atualizar cada fonte. Os números indicam produtos consultados, novos e com dados alterados na última atualização concluída; quando uma tentativa falha, as contagens anteriores são preservadas. O indicador mostra o resultado da consulta mais recente, sem testar disponibilidade continuamente.
