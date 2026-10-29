@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Ofertas da Boa">
+  <rect width="128" height="128" rx="32" fill="#b93422"/>
+  <path d="M42 91V58c9-5 14-11 18-23l3-10c2-5 10-4 12 1 2 6 1 13-2 21h18c8 0 12 5 10 12l-7 26c-1 5-5 7-10 7H59c-6 0-11-1-17-3Z" fill="#fff9ef" stroke="#fff9ef" stroke-width="4" stroke-linejoin="round"/>
+  <rect x="24" y="57" width="15" height="37" rx="5" fill="#ffcf57"/>
+  <path d="M98 27v12M92 33h12" stroke="#ffcf57" stroke-width="5" stroke-linecap="round"/>
+</svg>

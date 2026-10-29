@@ -305,11 +305,11 @@ export function createApp(db, storeProviders = providers, options = {}) {
         if (path === '/api/delete-list') { db.db.prepare('DELETE FROM lists WHERE id=?').run(Number(data.id)); return json({ ok: true }); }
         return json({ error: 'Não encontrado' }, 404);
       }
-      if (req.method !== 'GET') return json({ error: 'Não encontrado' }, 404);
+      if (req.method !== 'GET' && req.method !== 'HEAD') return json({ error: 'Não encontrado' }, 404);
       const name = path === '/' ? 'index.html' : path.slice(1);
       const root = resolve('dist'), file = resolve(root, name);
       if (!file.startsWith(root + '/')) return json({ error: 'Não encontrado' }, 404);
-      try { const content = await readFile(file); res.writeHead(200, { 'Content-Type': ({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml'})[extname(file)] || 'application/octet-stream' }); res.end(content); } catch { json({ error: 'Arquivo não encontrado. Execute npm run build.' }, 404); }
+      try { const content = await readFile(file); res.writeHead(200, { 'Content-Type': ({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg'})[extname(file)] || 'application/octet-stream' }); res.end(content); } catch { json({ error: 'Arquivo não encontrado. Execute npm run build.' }, 404); }
     } catch (e) { logError('request',e); json({ error:'Não foi possível concluir a solicitação. Verifique os dados e tente novamente.' }, 400); }
   });
   server.stopImageSearch = stopImageSearch;

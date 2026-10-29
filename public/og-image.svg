@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+ <rect width="1200" height="630" fill="#fff9ef"/>
+ <circle cx="1168" cy="-65" r="315" fill="#fff0d7"/>
+ <circle cx="35" cy="620" r="230" fill="#ffefd6"/>
+ <rect x="96" y="170" width="282" height="282" rx="70" fill="#b93422"/>
+ <path d="M188 370V298c20-11 31-24 40-50l7-22c4-11 22-9 26 2 5 13 2 29-4 46h39c18 0 27 11 22 26l-15 58c-3 11-12 16-23 16h-55c-14 0-25-3-37-7Z" fill="#fff9ef" stroke="#fff9ef" stroke-width="8" stroke-linejoin="round"/>
+ <rect x="148" y="296" width="33" height="82" rx="10" fill="#ffcf57"/>
+ <path d="M313 228v26M300 241h26" stroke="#ffcf57" stroke-width="10" stroke-linecap="round"/>
+ <text x="430" y="280" font-family="DejaVu Sans, sans-serif" font-size="76" font-weight="700" letter-spacing="-3" fill="#482c22">Ofertas</text>
+ <text x="430" y="380" font-family="DejaVu Sans, sans-serif" font-size="92" font-weight="700" letter-spacing="-4" fill="#b93422">da Boa</text>
+ <text x="435" y="435" font-family="DejaVu Sans, sans-serif" font-size="24" fill="#805b47">Ofertas de supermercado em um só lugar.</text>
+ <rect x="435" y="472" width="79" height="7" rx="3.5" fill="#ffbd48"/>
+</svg>
