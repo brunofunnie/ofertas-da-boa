@@ -48,3 +48,5 @@
 .admin-icon{width:20px;height:20px}
 .share-list{display:grid;place-items:center;width:40px;height:44px;flex:none;border-radius:9px;color:#a53f25}.share-list:focus-visible{outline:2px solid #b93422;outline-offset:2px}
 .primary svg{display:inline-block;vertical-align:-.125em}
+.store-toast-top{top:calc(12px + env(safe-area-inset-top));bottom:auto;pointer-events:none;text-align:center}
+.store-toast-top{overflow-wrap:anywhere}

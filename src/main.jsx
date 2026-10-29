@@ -66,7 +66,7 @@ function PriceFilterIcon() { return <Icon icon={IconAdjustmentsHorizontal}/>; }
 function ViewIcon({grid}) { return <Icon icon={grid ? IconList : IconLayoutGrid}/>; }
 function AdminIcon() { return <Icon icon={IconSettings} size={20}/>; }
 function RefreshIcon({ spinning }) { return <Icon icon={IconRefresh} className={spinning ? 'refresh-spin' : undefined}/>; }
-function Toast({ text }) { return text ? <div className="store-toast" role="status">{text}</div> : null; }
+function Toast({ text, top = false }) { return text ? <div className={`store-toast${top ? ' store-toast-top' : ''}`} role="status">{text}</div> : null; }
 function ReviewPanel({offers, currentOffers, stores, onReview}) {
   const [busy,setBusy]=useState(null), [error,setError]=useState('');
   async function decide(id, decision) {setBusy(id);setError('');try {await onReview(id,decision);}catch(e){setError(e.message);}finally{setBusy(null);}}
@@ -173,10 +173,11 @@ function App() {
   const [removal, setRemoval] = useState(null);
   const [removing, setRemoving] = useState(false);
   const [modal, setModal] = useState(''), [selected, setSelected] = useState(null), [message, setMessage] = useState(''), [busy, setBusy] = useState(false);
-  const [refreshing, setRefreshing] = useState({}), [toast, setToast] = useState('');
+  const [refreshing, setRefreshing] = useState({}), [toast, setToast] = useState(''), [addedToast, setAddedToast] = useState(null);
   useEffect(() => { if (!data.user?.admin) setAdminOpen(false); }, [data.user?.admin]);
   useEffect(() => {const url=new URL(window.location.href);if(url.searchParams.get('login')==='erro'){setMessage('Não foi possível entrar com o Google. Tente novamente.');url.searchParams.delete('login');window.history.replaceState(null,'',url.pathname+url.search+url.hash);}}, []);
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(''), 6000); return () => clearTimeout(timer); }, [toast]);
+  useEffect(() => { if (!addedToast) return; const timer = setTimeout(() => setAddedToast(null), 3500); return () => clearTimeout(timer); }, [addedToast]);
   async function load() { const response = await fetch('/api/data'); if (!response.ok) throw Error('Não foi possível carregar os dados.'); setData(await response.json()); }
   function chooseOffer(id, priceType = 'regular') { if (!data.user) {setModal('login');return;} setSelected({id,priceType}); setModal('choose'); }
   function startLogin(e) {if (data.login_available === false) {e.preventDefault();setMessage('Login Google ainda não configurado.');setModal('');}}
@@ -204,7 +205,7 @@ function App() {
     catch (e) { setToast(`Falha na atualização: ${e.message}`); }
     finally { setRefreshing(current => ({...current, [id]:false})); }
   }
-  async function createList(e) { e.preventDefault(); const form = e.currentTarget; await action(async () => { const result = await post('list', { name: new FormData(form).get('name') }); if (selected) await post('item', { list_id: result.id, offer_id: selected.id, price_type: selected.priceType }); setActiveListId(result.id); setSelected(null); setModal(''); }); }
+  async function createList(e) { e.preventDefault(); const form = e.currentTarget; await action(async () => { const name = new FormData(form).get('name'), result = await post('list', { name }); if (selected) { await post('item', { list_id: result.id, offer_id: selected.id, price_type: selected.priceType }); setAddedToast({text:`Adicionado à lista ${name}`}); } setActiveListId(result.id); setSelected(null); setModal(''); }); }
   const matchingKeys = query.trim() ? new Set((searchResults || []).map(o => o.product_key || `offer:${o.id}`)) : null;
   const threshold = data.irresistible_percent ?? 20;
   const hasIrresistible = data.offers.some(offer => isIrresistible(offer, threshold));
@@ -255,6 +256,7 @@ function App() {
     {showTop && <button type="button" className={`scroll-top ${view === 'listas' && activeList ? 'in-list-footer' : ''}`} aria-label="Voltar ao topo" onClick={() => window.scrollTo({top:0, behavior:'instant'})}><Icon icon={IconArrowUp}/></button>}
     {adminOpen && data.user?.admin && <AdminDialog data={data} refreshing={refreshing} onRefresh={refreshStore} onRefreshAll={refresh} busy={busy} percent={threshold} onClose={() => setAdminOpen(false)} onSettingsSaved={async () => { await load(); setToast('Configuração salva'); }} onAiSaved={() => setToast('Configuração de IA salva')} onCookiesSaved={() => setToast('Cookies salvos')} onReview={async (id,decision) => { await post('review-offer',{id,decision}); await load(); }} toast={toast}/>}
     {!adminOpen && <Toast text={toast}/>}
+    <Toast text={addedToast?.text} top/>
     {historyOffer && <HistoryDialog offer={historyOffer} store={data.stores[historyOffer.store]?.[0] || historyOffer.store} onClose={() => setHistoryOffer(null)}/>}
     {previewImage && <ImageLightbox image={previewImage} onClose={() => setPreviewImage(null)} />}
     {modal && <div className="modal" onMouseDown={e => { if (e.target === e.currentTarget) setModal(''); }}><div role="dialog" aria-modal="true" aria-labelledby="dialog-title" className="modal-panel"><div className="mb-4 flex items-center justify-between"><h2 id="dialog-title" className="font-bold">{modal === 'login' ? 'Entrar' : modal === 'list' ? 'Nova lista' : modal === 'rename' ? 'Renomear lista' : modal === 'quantity' ? 'Editar quantidade' : 'Adicionar à lista'}</h2><button className="icon" onClick={() => setModal('')} aria-label="Fechar"><Icon icon={IconX} size={16}/></button></div>
@@ -262,7 +264,7 @@ function App() {
       {modal === 'list' && <form className="space-y-3" onSubmit={createList}><label>Nome<input name="name" required autoFocus placeholder="Ex.: Compra da semana" /></label><button className="primary w-full">Criar lista</button></form>}
       {modal === 'rename' && <form className="space-y-3" onSubmit={e => { e.preventDefault(); const name = new FormData(e.currentTarget).get('name'); action(async () => { await post('rename-list', {id:activeList.id, name}); setModal(''); }); }}><label>Nome<input name="name" defaultValue={activeList.name} maxLength="100" required autoFocus /></label><button className="primary w-full">Salvar</button></form>}
       {modal === 'quantity' && editingItem && <form className="space-y-3" onSubmit={e => { e.preventDefault(); const quantity = Number(new FormData(e.currentTarget).get('quantity')); action(async () => { await post('quantity', {list_id:activeList.id, offer_id:editingItem.id, quantity}); setModal(''); }); }}><p className="text-sm">{editingItem.name}</p><label>{editingItem.price_unit === 'kg' ? 'Quantidade (kg)' : 'Quantidade'}<input name="quantity" type="number" inputMode="numeric" min="1" max="999" step="1" defaultValue={editingItem.quantity} required autoFocus /></label><button className="primary w-full">Salvar</button></form>}
-      {modal === 'choose' && <div className="space-y-2">{data.lists.map(list => <button key={list.id} className="choose" onClick={() => action(async () => { await post('item', { list_id: list.id, offer_id: selected.id, price_type: selected.priceType }); setModal(''); setSelected(null); setMessage('Produto adicionado.'); })}>{list.name} <span className="text-xs text-[#987766]">· {list.items.length} itens</span></button>)}<button className="primary w-full" onClick={() => setModal('list')}><Icon icon={IconPlus} size={12}/> Nova lista</button></div>}
+      {modal === 'choose' && <div className="space-y-2">{data.lists.map(list => <button key={list.id} className="choose" onClick={() => action(async () => { await post('item', { list_id: list.id, offer_id: selected.id, price_type: selected.priceType }); setModal(''); setSelected(null); setAddedToast({text:`Adicionado à lista ${list.name}`}); })}>{list.name} <span className="text-xs text-[#987766]">· {list.items.length} itens</span></button>)}<button className="primary w-full" onClick={() => setModal('list')}><Icon icon={IconPlus} size={12}/> Nova lista</button></div>}
     </div></div>}
   </div>;
 }
