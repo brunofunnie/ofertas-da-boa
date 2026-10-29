@@ -78,7 +78,7 @@ test('renomeia lista e atualiza quantidade preservando os itens', async () => {
   const db = new Database(':memory:');
   db.saveOffers('tauste', [{name:'Arroz 5kg',price:2000}]);
   const list = db.createList('Semana'); const offer = db.offers()[0]; db.addItem(list, offer.id);
-  const server = createApp(db); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const server = createApp(db,undefined,{resolveUser:()=>({sub:'legacy-admin',email:'brunodeoliveira@gmail.com',name:'Admin',admin:true})}); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const post = (path, data) => fetch(`http://127.0.0.1:${server.address().port}/api/${path}`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
   try {
     assert.equal((await post('rename-list', {id:list, name:'Mês'})).status, 200);

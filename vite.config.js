@@ -9,7 +9,7 @@ export default defineConfig({
       const db = new Database(process.env.DATABASE_PATH || 'ofertas.sqlite3');
       const api = createApp(db);
       server.middlewares.use((req, res, next) => {
-        if (req.url?.startsWith('/api/')) api.emit('request', req, res);
+        if (req.url?.startsWith('/api/') || req.url?.startsWith('/auth/google')) api.emit('request', req, res);
         else next();
       });
       server.httpServer?.once('close', () => { api.stopImageSearch(); db.close(); });

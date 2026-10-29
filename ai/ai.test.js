@@ -28,7 +28,7 @@ test('API salva e lista modelos sem devolver a chave e rejeita origem externa', 
  const {Database,createApp}=await import('../server.js');
  const dir=await mkdtemp(join(tmpdir(),'ofertas-ai-http-'));const path=join(dir,'config.json');
  const originalFetch=globalThis.fetch; globalThis.fetch=async (url,options)=>String(url)==='https://example.org/v1/models' ? new Response(JSON.stringify({data:[{id:'modelo-vision'}]})) : originalFetch(url,options);
- const db=new Database(':memory:'), server=createApp(db,[],{aiConfigPath:path});await new Promise(r=>server.listen(0,'127.0.0.1',r));const root=`http://127.0.0.1:${server.address().port}`;
+ const db=new Database(':memory:'), server=createApp(db,[],{aiConfigPath:path,resolveUser:()=>({sub:'legacy-admin',email:'brunodeoliveira@gmail.com',name:'Admin',admin:true})});await new Promise(r=>server.listen(0,'127.0.0.1',r));const root=`http://127.0.0.1:${server.address().port}`;
  const config={provider:'openai',base_url:'https://example.org/v1',model:'modelo-vision',api_key:'segredo'};
  const post=async (name,data,origin)=>fetch(`${root}/api/${name}`,{method:'POST',headers:{'content-type':'application/json',...(origin?{origin}:{})},body:JSON.stringify(data)});
  try {const saved=await post('ai-config',config);assert.equal(saved.status,200);assert.ok(!(await saved.text()).includes('segredo'));

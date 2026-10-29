@@ -23,6 +23,7 @@ services:
       HOME: /tmp
       XDG_CONFIG_HOME: /tmp
       XDG_CACHE_HOME: /tmp
+      GOOGLE_REDIRECT_URI: https://ofertas.funnie.dev/auth/google/callback
     volumes:
       - ./data:/data
       - ./data/local:/app/.local

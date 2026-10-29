@@ -10,6 +10,7 @@ import { startImageSearch } from './image-search/index.js';
 import { providers } from './providers/index.js';
 import { cookiesPath, normalizeCookies } from './providers/instagram/index.js';
 import {publicConfig, saveConfig, modelConfig, listModels} from './ai/index.js';
+import {createGoogleAuth, getSession, destroySession} from './auth/index.js';
 export { parseTauste } from './providers/tauste/index.js';
 
 export const STORES = Object.fromEntries(providers.map(provider => [provider.id, [provider.name, provider.url]]));
@@ -32,6 +33,8 @@ export class Database {
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
       CREATE TABLE IF NOT EXISTS offers(id INTEGER PRIMARY KEY, store TEXT NOT NULL, name TEXT NOT NULL, category TEXT NOT NULL, price INTEGER NOT NULL, previous_price INTEGER, url TEXT, updated TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(store,name));
       CREATE TABLE IF NOT EXISTS lists(id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, email TEXT NOT NULL, name TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS auth_sessions(token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS items(list_id INTEGER NOT NULL, offer_id INTEGER NOT NULL, checked INTEGER DEFAULT 0, PRIMARY KEY(list_id,offer_id), FOREIGN KEY(list_id) REFERENCES lists(id) ON DELETE CASCADE, FOREIGN KEY(offer_id) REFERENCES offers(id));
       CREATE TABLE IF NOT EXISTS sources(store TEXT PRIMARY KEY, status TEXT, updated TEXT);
       CREATE TABLE IF NOT EXISTS store_source_status(store TEXT NOT NULL, source TEXT NOT NULL, state TEXT NOT NULL, status TEXT, updated TEXT DEFAULT CURRENT_TIMESTAMP, last_success TEXT, total INTEGER, PRIMARY KEY(store,source));
@@ -44,6 +47,8 @@ export class Database {
     }
     if (!sourceColumns.has('state')) this.db.exec("UPDATE sources SET state = CASE WHEN status LIKE 'Não atualizado:%' THEN 'error' WHEN status LIKE '%produtos atualizados' THEN 'ok' ELSE NULL END, last_success = CASE WHEN status LIKE '%produtos atualizados' THEN updated ELSE NULL END");
     const itemColumns = new Set(this.db.prepare('PRAGMA table_info(items)').all().map(c => c.name));
+    const listColumns = new Set(this.db.prepare('PRAGMA table_info(lists)').all().map(c => c.name));
+    if (!listColumns.has('owner_id')) this.db.exec("ALTER TABLE lists ADD COLUMN owner_id TEXT NOT NULL DEFAULT 'legacy-admin'");
     if (!itemColumns.has('quantity')) this.db.exec('ALTER TABLE items ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1');
     const columns = new Set(this.db.prepare('PRAGMA table_info(offers)').all().map(c => c.name));
     if (!columns.has('price_unit')) this.db.exec("ALTER TABLE offers ADD COLUMN price_unit TEXT NOT NULL DEFAULT 'un'");
@@ -170,9 +175,9 @@ export class Database {
     }
     return this.offers().filter(offer => scores.has(offer.id)).sort((a, b) => scores.get(a.id) - scores.get(b.id));
   }
-  createList(name) { return Number(this.db.prepare('INSERT INTO lists(name) VALUES(?)').run(name).lastInsertRowid); }
+  createList(name, owner = 'legacy-admin') { return Number(this.db.prepare('INSERT INTO lists(name,owner_id) VALUES(?,?)').run(name, owner).lastInsertRowid); }
   addItem(list, offer) { this.db.prepare('INSERT OR IGNORE INTO items(list_id,offer_id) VALUES(?,?)').run(list, offer); }
-  lists() { const images = this.productImages(); return this.db.prepare('SELECT * FROM lists ORDER BY id DESC').all().map(l => ({ ...l, items: this.db.prepare('SELECT offers.*,items.checked,items.quantity FROM items JOIN offers ON offers.id=items.offer_id WHERE list_id=? ORDER BY checked,name').all(l.id).map(item => ({ ...item, ...(images.get(item.product_key) || { image_url: null, image_source: null }) })) })); }
+  lists(owner = 'legacy-admin') { const images = this.productImages(); return this.db.prepare('SELECT id,name FROM lists WHERE owner_id=? ORDER BY id DESC').all(owner).map(l => ({ ...l, items: this.db.prepare('SELECT offers.*,items.checked,items.quantity FROM items JOIN offers ON offers.id=items.offer_id WHERE list_id=? ORDER BY checked,name').all(l.id).map(item => ({ ...item, ...(images.get(item.product_key) || { image_url: null, image_source: null }) })) })); }
   status(store, result) {
     this.db.prepare(`INSERT INTO sources(store,status,updated,state,last_success,total,new_count,changed_count) VALUES(?,?,CURRENT_TIMESTAMP,?,CASE WHEN ?='ok' THEN CURRENT_TIMESTAMP ELSE NULL END,?,?,?)
       ON CONFLICT(store) DO UPDATE SET status=excluded.status,updated=excluded.updated,state=excluded.state,last_success=COALESCE(excluded.last_success,sources.last_success),total=COALESCE(excluded.total,sources.total),new_count=COALESCE(excluded.new_count,sources.new_count),changed_count=COALESCE(excluded.changed_count,sources.changed_count)`)
@@ -182,7 +187,9 @@ export class Database {
   close() { this.db.close(); }
 }
 async function fetchPage(url) { const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 OfertasDaBoa/1.0' }, signal: AbortSignal.timeout(20000) }); if (!res.ok) throw Error(`HTTP ${res.status}`); return res.text(); }
-const auditPaths = new Set(['/api/refresh-store','/api/refresh','/api/offer','/api/list','/api/rename-list','/api/quantity','/api/item','/api/check','/api/remove','/api/delete-list','/api/review-offer','/api/ai-config','/api/ai-models','/api/instagram-cookies']);
+const auditPaths = new Set(['/api/refresh-store','/api/refresh','/api/offer','/api/list','/api/rename-list','/api/quantity','/api/item','/api/check','/api/remove','/api/delete-list','/api/review-offer','/api/ai-config','/api/ai-models','/api/instagram-cookies','/api/logout']);
+const adminPaths = new Set(['/api/refresh-store','/api/refresh','/api/offer','/api/review-offer','/api/ai-config','/api/ai-models','/api/instagram-cookies']);
+const listPaths = new Set(['/api/list','/api/rename-list','/api/quantity','/api/item','/api/check','/api/remove','/api/delete-list']);
 function logError(scope, error) {
   const detail = String(error?.stack || error?.message || error).slice(0,4000).replace(/(https?:\/\/[^\s?]+)\?[^\s]*/gi,'$1?[redacted]').replace(/\b(?:sk-|gh[pousr]_)[A-Za-z0-9_-]{12,}/g,'[redacted]').replace(/(Bearer\s+)[^\s]+/gi,'$1[redacted]');
   console.error(JSON.stringify({type:'error',at:new Date().toISOString(),scope,detail}));
@@ -200,6 +207,7 @@ function safeStoredStatus(source) {
 export function createApp(db, storeProviders = providers, options = {}) {
   const inFlight = new Map();
   const inFlightSources = new Map();
+  const google = createGoogleAuth(options.googleAuth);
   const refreshOne = provider => {
     if (inFlight.has(provider.id)) return inFlight.get(provider.id);
     if (provider.sourceDefinitions) inFlightSources.set(provider.id, new Set(provider.sourceDefinitions.map(source => source.id)));
@@ -238,17 +246,23 @@ export function createApp(db, storeProviders = providers, options = {}) {
     try {
       const requestUrl = new URL(req.url, 'http://localhost');
       const path = requestUrl.pathname;
+      const user = options.resolveUser ? options.resolveUser(req) : getSession(db.db,req);
+      if (req.method === 'GET' && path === '/auth/google') return google.begin(req,res);
+      if (req.method === 'GET' && path === '/auth/google/callback') return await google.callback(req,res,db.db,requestUrl);
       if (req.method === 'POST' && auditPaths.has(path)) {
         const client = req.headers['cf-connecting-ip'];
-        res.once('finish', () => console.log(JSON.stringify({type:'audit',at:new Date().toISOString(),action:path.slice(5),status:res.statusCode,outcome:auditOutcome || (res.statusCode < 400 ? 'ok' : 'error'),actor:'sem-autenticacao',client_ip:typeof client === 'string' && isIP(client) ? client : req.socket.remoteAddress || null,...auditDetails})));
+        res.once('finish', () => console.log(JSON.stringify({type:'audit',at:new Date().toISOString(),action:path.slice(5),status:res.statusCode,outcome:auditOutcome || (res.statusCode < 400 ? 'ok' : 'error'),actor:user?.sub || 'sem-autenticacao',client_ip:typeof client === 'string' && isIP(client) ? client : req.socket.remoteAddress || null,...auditDetails})));
       }
-      if (req.method === 'GET' && path === '/api/ai-config') { res.setHeader('Cache-Control','no-store'); return json(await publicConfig(options.aiConfigPath)); }
+      if (req.method === 'GET' && path === '/api/ai-config') { if (!user?.admin) return json({error:'Acesso restrito.'},user ? 403 : 401); res.setHeader('Cache-Control','no-store'); return json(await publicConfig(options.aiConfigPath)); }
       if (req.method === 'GET' && path === '/api/search') return json(db.search(requestUrl.searchParams.get('q') || ''));
-      if (req.method === 'GET' && path === '/api/data') { const sources = db.db.prepare('SELECT * FROM sources').all().map(safeStoredStatus); for (const id of inFlight.keys()) { const existing = sources.find(s => s.store === id); if (existing) existing.state = 'running'; else sources.push({store:id,state:'running'}); } const sourceRows = db.db.prepare('SELECT * FROM store_source_status').all().map(row => row.state === 'error' ? {...row,status:sourceError(row.status)} : row); const store_sources = storeProviders.flatMap(p => (p.sourceDefinitions || []).map(def => ({store:p.id,source:def.id,name:def.name,...(sourceRows.find(row => row.store === p.id && row.source === def.id) || {state:'unknown'}),...(inFlightSources.get(p.id)?.has(def.id) ? {state:'running'} : {})}))); return json({ offers: db.offers(), pending_offers:db.pendingOffers(), lists: db.lists(), sources, store_sources, stores: Object.fromEntries(storeProviders.map(p => [p.id,[p.name,p.url]])) }); }
+      if (req.method === 'GET' && path === '/api/data') { res.setHeader('Cache-Control','no-store'); res.setHeader('Vary','Cookie'); const sources = db.db.prepare('SELECT * FROM sources').all().map(safeStoredStatus); for (const id of inFlight.keys()) { const existing = sources.find(s => s.store === id); if (existing) existing.state = 'running'; else sources.push({store:id,state:'running'}); } const sourceRows = db.db.prepare('SELECT * FROM store_source_status').all().map(row => row.state === 'error' ? {...row,status:sourceError(row.status)} : row); const store_sources = storeProviders.flatMap(p => (p.sourceDefinitions || []).map(def => ({store:p.id,source:def.id,name:def.name,...(sourceRows.find(row => row.store === p.id && row.source === def.id) || {state:'unknown'}),...(inFlightSources.get(p.id)?.has(def.id) ? {state:'running'} : {})}))); return json({ offers: db.offers(), pending_offers:user?.admin ? db.pendingOffers() : [], lists:user ? db.lists(user.sub) : [], user:user ? {name:user.name,email:user.email,admin:!!user.admin} : null, login_available:google.available, sources, store_sources, stores: Object.fromEntries(storeProviders.map(p => [p.id,[p.name,p.url]])) }); }
       if (req.method === 'POST' && path.startsWith('/api/')) {
         const origin = req.headers.origin, site = req.headers['sec-fetch-site'];
         if ((origin && (() => { try { const url = new URL(origin); return !['http:','https:'].includes(url.protocol) || url.host !== req.headers.host; } catch { return true; } })()) || site === 'cross-site' || site === 'same-site') return json({error:'Origem não permitida.'},403);
         if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '')) return json({error:'Use application/json.'},415);
+        if (adminPaths.has(path) && !user?.admin) return json({error:'Acesso restrito.'},user ? 403 : 401);
+        if (listPaths.has(path) && !user) return json({error:'Entre com o Google para usar listas.'},401);
+        if (path === '/api/logout') {destroySession(db.db,req);res.setHeader('Set-Cookie',google.clearCookie());return json({ok:true});}
         let body = ''; for await (const chunk of req) { body += chunk; if (body.length > 100000) throw Error('Pedido muito grande'); }
         let data; try { data = JSON.parse(body || '{}'); } catch { throw Error('JSON inválido.'); }
         if (storeProviders.some(provider => provider.id === data.store)) auditDetails.store = data.store;
@@ -287,7 +301,11 @@ export function createApp(db, storeProviders = providers, options = {}) {
           return json({ok:true});
         }
         if (path === '/api/offer') { const name = String(data.name || '').trim(), price = parsePrice(data.price); if (!name || !STORES[data.store] || !price) throw Error('Informe produto, supermercado e preço válido.'); db.saveOffers(data.store, [{ name, price, category: data.category, url: STORES[data.store][1] }]); return json({ ok: true }); }
-        if (path === '/api/list') { const name = String(data.name || '').trim(); if (!name) throw Error('Informe o nome da lista.'); return json({ id: db.createList(name) }); }
+        if (path === '/api/list') { const name = String(data.name || '').trim(); if (!name || name.length > 100) throw Error('Informe o nome da lista.'); return json({ id: db.createList(name,user.sub) }); }
+        if (listPaths.has(path) && path !== '/api/list') {
+          const listId = Number(path === '/api/rename-list' || path === '/api/delete-list' ? data.id : data.list_id);
+          if (!Number.isSafeInteger(listId) || listId < 1 || !db.db.prepare('SELECT 1 FROM lists WHERE id=? AND owner_id=?').get(listId,user.sub)) return json({error:'Lista não encontrada.'},404);
+        }
         if (path === '/api/rename-list') {
           const name = typeof data.name === 'string' ? data.name.trim() : '';
           if (!name || name.length > 100 || !Number.isSafeInteger(data.id) || data.id < 1) throw Error('Informe um nome válido para a lista.');

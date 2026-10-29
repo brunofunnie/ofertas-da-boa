@@ -7,7 +7,7 @@ import {Database,createApp} from '../server.js';
 
 test('salva cookies válidos sem expor a sessão e preserva arquivo ao rejeitar dados inválidos', async () => {
   const dir=await mkdtemp(join(tmpdir(),'ofertas-cookies-')), path=join(dir,'instagram-cookies.json');
-  const db=new Database(':memory:'), server=createApp(db,[],{instagramCookiesPath:path});
+  const db=new Database(':memory:'), server=createApp(db,[],{instagramCookiesPath:path,resolveUser:()=>({sub:'legacy-admin',email:'brunodeoliveira@gmail.com',name:'Admin',admin:true})});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve)); const url=`http://127.0.0.1:${server.address().port}/api/instagram-cookies`;
   const send=async (cookies,origin)=>fetch(url,{method:'POST',headers:{'content-type':'application/json',...(origin?{origin}:{})},body:JSON.stringify({cookies})});
   try {
