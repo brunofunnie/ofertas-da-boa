@@ -18,7 +18,7 @@ export default defineConfig({
         if (req.url?.startsWith('/api/') || req.url?.startsWith('/auth/google')) api.emit('request', req, res);
         else next();
       });
-      server.httpServer?.once('close', () => { api.stopImageSearch(); db.close(); });
+      server.httpServer?.once('close', () => { db.close(); });
     }
   }]
 });

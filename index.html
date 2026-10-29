@@ -24,6 +24,17 @@
   <meta name="twitter:description" content="Compare ofertas de supermercados e organize suas listas de compras.">
   <meta name="twitter:image" content="https://ofertas.funnie.dev/og-image.png">
   <title>Ofertas da Boa</title>
+  <style>
+    #splash{position:fixed;inset:0;z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:#fff9ef;pointer-events:none;animation:splash-exit .35s ease 1.65s forwards}
+    .splash-logo{width:112px;height:112px;overflow:visible}
+    .splash-thumb{transform-box:fill-box;transform-origin:30% 80%;animation:thumb-toss 1.3s ease both}
+    .splash-plus{transform-box:view-box;transform-origin:98px 33px;animation:coin-toss 1.35s cubic-bezier(.2,.7,.2,1) both}
+    .splash-title{color:#9f3321;font:700 22px/1.2 system-ui,sans-serif;letter-spacing:-.03em}
+    @keyframes thumb-toss{0%,18%{transform:rotate(-5deg)}35%{transform:rotate(7deg)}55%,100%{transform:rotate(0)}}
+    @keyframes coin-toss{0%,14%{transform:translate(-34px,4px) rotate(0) scale(.8)}48%{transform:translate(-17px,-29px) rotate(270deg) scale(1.1)}76%,100%{transform:translate(0,0) rotate(720deg) scale(1)}}
+    @keyframes splash-exit{to{opacity:0;visibility:hidden}}
+    @media(prefers-reduced-motion:reduce){#splash{animation-delay:.25s}.splash-thumb,.splash-plus{animation:none}}
+  </style>
 </head>
-<body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body>
+<body><div id="splash" aria-hidden="true"><svg class="splash-logo" viewBox="0 0 128 128"><rect width="128" height="128" rx="32" fill="#b93422"/><path class="splash-thumb" d="M42 91V58c9-5 14-11 18-23l3-10c2-5 10-4 12 1 2 6 1 13-2 21h18c8 0 12 5 10 12l-7 26c-1 5-5 7-10 7H59c-6 0-11-1-17-3Z" fill="#fff9ef" stroke="#fff9ef" stroke-width="4" stroke-linejoin="round"/><rect x="24" y="57" width="15" height="37" rx="5" fill="#ffcf57"/><path class="splash-plus" d="M98 27v12M92 33h12" fill="none" stroke="#ffcf57" stroke-width="5" stroke-linecap="round"/></svg><span class="splash-title">Ofertas da Boa</span></div><div id="root"></div><script type="module" src="/src/main.jsx"></script></body>
 </html>

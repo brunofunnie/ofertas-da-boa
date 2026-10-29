@@ -40,7 +40,7 @@ A aplicação não remove automaticamente ofertas antigas nem confirma validade 
 
 A busca usa um índice de relações entre produtos e palavras no SQLite. Ignora acentos, aceita palavras em qualquer ordem, prefixos e um erro de digitação em palavras de pelo menos quatro letras. Os filtros de setor e mercado continuam disponíveis junto com a busca.
 
-Quando faltam imagens, o servidor consulta o Open Food Facts em segundo plano, uma busca a cada 12 segundos. O nome do produto é enviado ao serviço externo; apenas correspondências conservadoras com marca e quantidade são usadas, e a fonte da foto aparece na interface. Produtos sem quantidade identificável também são pesquisados, mas a imagem só é associada quando a identificação for segura. Resultados ausentes são tentados novamente após sete dias ou quando o produto é atualizado; falhas são tentadas novamente após uma hora. Opcionalmente, configure `OFF_USER_AGENT` com identificação e contato da aplicação. As imagens do supermercado têm prioridade.
+As imagens fornecidas pelos supermercados são compartilhadas entre as ofertas do mesmo produto.
 
 O provedor Santo Supermercados consulta os produtos exibidos nos setores da página inicial e percorre o carrossel de ofertas. Preços exclusivos do aplicativo e produtos vendidos por quilo são identificados na tela. O catálogo online pode variar conforme a loja e a forma de entrega; a consulta usa o catálogo público sem loja selecionada.
 

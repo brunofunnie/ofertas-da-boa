@@ -6,7 +6,6 @@ import { randomUUID, createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { isIP } from 'node:net';
 import { productKey } from './matcher.js';
-import { startImageSearch } from './image-search/index.js';
 import { providers } from './providers/index.js';
 import { cookiesPath, normalizeCookies } from './providers/instagram/index.js';
 import {publicConfig, saveConfig, modelConfig, listModels} from './ai/index.js';
@@ -58,11 +57,7 @@ export class Database {
     if (!columns.has('image_url')) this.db.exec('ALTER TABLE offers ADD COLUMN image_url TEXT');
     if (!columns.has('product_key')) this.db.exec('ALTER TABLE offers ADD COLUMN product_key TEXT');
     this.db.exec("CREATE TABLE IF NOT EXISTS price_history(id INTEGER PRIMARY KEY, product_key TEXT NOT NULL, store TEXT NOT NULL, condition TEXT NOT NULL DEFAULT '', price INTEGER NOT NULL, observed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP); CREATE INDEX IF NOT EXISTS price_history_product ON price_history(product_key,store,condition,id)");
-    this.db.exec('CREATE TABLE IF NOT EXISTS product_images(product_key TEXT PRIMARY KEY, image_url TEXT NOT NULL, source_url TEXT NOT NULL); CREATE TABLE IF NOT EXISTS image_search_attempts(product_key TEXT PRIMARY KEY, retry_after TEXT NOT NULL)');
-    const attemptColumns = new Set(this.db.prepare('PRAGMA table_info(image_search_attempts)').all().map(c => c.name));
-    if (!attemptColumns.has('outcome')) {
-      this.db.exec("ALTER TABLE image_search_attempts ADD COLUMN outcome TEXT; UPDATE image_search_attempts SET outcome=CASE WHEN retry_after > datetime('now','+1 hour') THEN 'miss' ELSE 'error' END");
-    }
+    this.db.exec('CREATE TABLE IF NOT EXISTS product_images(product_key TEXT PRIMARY KEY, image_url TEXT NOT NULL, source_url TEXT NOT NULL)');
     if (!columns.has('regular_price')) this.db.exec('ALTER TABLE offers ADD COLUMN regular_price INTEGER');
     if (!columns.has('extracted')) this.db.exec('ALTER TABLE offers ADD COLUMN extracted INTEGER NOT NULL DEFAULT 0');
     if (!columns.has('valid_until')) this.db.exec('ALTER TABLE offers ADD COLUMN valid_until TEXT');
@@ -110,7 +105,6 @@ export class Database {
         const productId = this.db.prepare('SELECT id FROM products WHERE product_key=?').get(key).id;
         this.db.prepare('UPDATE offers SET product_key=?,product_id=? WHERE id=?').run(key, productId, offer.id);
         if (o.image_url) this.db.prepare('UPDATE products SET image_url=?,image_source=NULL WHERE id=?').run(o.image_url, productId);
-        this.db.prepare("DELETE FROM image_search_attempts WHERE product_key=? AND outcome='miss'").run(key);
         this.indexOffer(offer);
         const previous = this.db.prepare('SELECT price FROM price_history WHERE product_key=? AND store=? AND condition=? ORDER BY id DESC LIMIT 1').get(key, store, o.condition || '');
         if (!previous || previous.price !== o.price) this.db.prepare('INSERT INTO price_history(product_key,product_id,store,condition,price) VALUES(?,?,?,?,?)').run(key, productId, store, o.condition || '', o.price);
@@ -148,7 +142,16 @@ export class Database {
   }
   productImages() {
     const images = new Map();
-    for (const row of this.db.prepare("SELECT product_key,image_url,image_source FROM products WHERE image_url IS NOT NULL AND image_url != ''").all()) images.set(row.product_key, {image_url:row.image_url,image_source:row.image_source});
+    const usable = value => {
+      try { const host = new URL(value).hostname.toLowerCase(); return host !== 'openfoodfacts.org' && !host.endsWith('.openfoodfacts.org'); }
+      catch { return false; }
+    };
+    for (const row of this.db.prepare("SELECT product_key,image_url,image_source FROM products WHERE image_url IS NOT NULL AND image_url != ''").all()) {
+      if (usable(row.image_url) && (!row.image_source || usable(row.image_source))) images.set(row.product_key, {image_url:row.image_url,image_source:row.image_source});
+    }
+    for (const row of this.db.prepare("SELECT product_key,image_url FROM offers WHERE image_url IS NOT NULL AND image_url != '' ORDER BY updated DESC,id DESC").all()) {
+      if (!images.has(row.product_key) && usable(row.image_url)) images.set(row.product_key, {image_url:row.image_url,image_source:null});
+    }
     return images;
   }
   offers() {
@@ -242,7 +245,6 @@ export function createApp(db, storeProviders = providers, options = {}) {
     work.finally(() => { inFlight.delete(provider.id); inFlightSources.delete(provider.id); });
     return work;
   };
-  const stopImageSearch = startImageSearch(db);
   const server = createServer(async (req, res) => {
     let auditDetails = {}, auditOutcome;
     const json = (data, status = 200) => { if (data?.state) auditOutcome = data.state; res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(data)); };
@@ -338,8 +340,6 @@ export function createApp(db, storeProviders = providers, options = {}) {
       try { const content = await readFile(file); res.writeHead(200, { 'Content-Type': ({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg'})[extname(file)] || 'application/octet-stream' }); res.end(content); } catch { json({ error: 'Arquivo não encontrado. Execute npm run build.' }, 404); }
     } catch (e) { logError('request',e); json({ error:'Não foi possível concluir a solicitação. Verifique os dados e tente novamente.' }, 400); }
   });
-  server.stopImageSearch = stopImageSearch;
-  server.once('close', stopImageSearch);
   return server;
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
