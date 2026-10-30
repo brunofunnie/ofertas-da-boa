@@ -12,6 +12,7 @@
     "dev:infisical": "node scripts/infisical-run.js dev node_modules/.bin/vite --host 0.0.0.0"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1160.0",
     "@tabler/icons-react": "^3.50.0",
     "@tailwindcss/vite": "^4.1.0",
     "cheerio": "^1.0.0",

@@ -31,6 +31,18 @@ export async function googleCredentials(environment, identity, fetcher = fetch) 
   return result;
 }
 
+export async function r2Credentials(environment, identity, fetcher = fetch) {
+  const login=await fetcher(`${base}/api/v1/auth/universal-auth/login`,{method:'POST',redirect:'error',headers:{'Content-Type':'application/json'},body:JSON.stringify({clientId:identity.INFISICAL_CLIENT_ID,clientSecret:identity.INFISICAL_CLIENT_SECRET}),signal:AbortSignal.timeout(15000)});
+  if (!login.ok) throw Error('Infisical: autenticação falhou');
+  const {accessToken}=await login.json();
+  const query=new URLSearchParams({workspaceId:project,environment,secretPath:'/ofertas-da-boa'});
+  const response=await fetcher(`${base}/api/v3/secrets/raw/R2_IMAGES_CREDENTIALS?${query}`,{headers:{Authorization:`Bearer ${accessToken}`},redirect:'error',signal:AbortSignal.timeout(15000)});
+  if (response.status===404) return {};
+  if (!response.ok) throw Error('Infisical: credencial R2 indisponível');
+  const {secret}=await response.json();
+  return {R2_IMAGES_CREDENTIALS:secret.secretValue};
+}
+
 export async function loadDevGoogleAuth(path = resolve(homedir(), '.config/infisical/homelab.ua.env'), fetcher = fetch) {
   let contents;
   try { contents = await readFile(path, 'utf8'); }
@@ -44,7 +56,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (!['prod', 'dev'].includes(environment) || !command) throw new Error('Uso: node scripts/infisical-run.js <dev|prod> <comando>');
   try {
     process.loadEnvFile(resolve(homedir(), '.config/infisical/homelab.ua.env'));
-    const credentials = await googleCredentials(environment, process.env);
+    const credentials = {...await googleCredentials(environment, process.env), ...await r2Credentials(environment, process.env)};
     const { INFISICAL_CLIENT_ID, INFISICAL_CLIENT_SECRET, ...environmentVars } = process.env;
     const child = spawn(command, args, { stdio: 'inherit', env: { ...environmentVars, ...credentials, ...(environment === 'dev' ? { GOOGLE_REDIRECT_URI: 'http://localhost:5173/auth/google/callback' } : {}) } });
     child.on('error', () => { console.error('Não foi possível iniciar o comando.'); process.exitCode = 1; });

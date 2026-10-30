@@ -6,6 +6,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { isIP } from 'node:net';
 import { productKey } from './matcher.js';
+import {createImageStore, downloadImage} from './image-store.js';
 import { providers } from './providers/index.js';
 import { cookiesPath, normalizeCookies } from './providers/instagram/index.js';
 import {publicConfig, saveConfig, modelConfig, listModels} from './ai/index.js';
@@ -77,6 +78,9 @@ export class Database {
     if (!columns.has('club_price')) this.db.exec('ALTER TABLE offers ADD COLUMN club_price INTEGER');
     if (!columns.has('condition')) this.db.exec("ALTER TABLE offers ADD COLUMN condition TEXT NOT NULL DEFAULT ''");
     this.db.exec('CREATE TABLE IF NOT EXISTS products(id INTEGER PRIMARY KEY, product_key TEXT NOT NULL UNIQUE, name TEXT NOT NULL, category TEXT NOT NULL, image_url TEXT, image_source TEXT)');
+    const productColumns = new Set(this.db.prepare('PRAGMA table_info(products)').all().map(c=>c.name));
+    if (!productColumns.has('image_r2_key')) this.db.exec('ALTER TABLE products ADD COLUMN image_r2_key TEXT');
+    if (!productColumns.has('image_manual')) this.db.exec('ALTER TABLE products ADD COLUMN image_manual INTEGER NOT NULL DEFAULT 0');
     if (!this.db.prepare('PRAGMA table_info(products)').all().some(column => column.name === 'customized')) this.db.exec('ALTER TABLE products ADD COLUMN customized INTEGER NOT NULL DEFAULT 0');
     this.db.exec('CREATE TABLE IF NOT EXISTS product_aliases(alias TEXT PRIMARY KEY,product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE)');
     if (!columns.has('product_id')) this.db.exec('ALTER TABLE offers ADD COLUMN product_id INTEGER REFERENCES products(id)');
@@ -121,7 +125,7 @@ export class Database {
         if (!target) {this.db.prepare('INSERT INTO products(product_key,name,category) VALUES(?,?,?)').run(derivedKey,o.name,o.category || categorize(o.name));target=this.db.prepare('SELECT id,product_key FROM products WHERE product_key=?').get(derivedKey);}
         const key=target.product_key, productId=target.id;
         this.db.prepare('UPDATE offers SET product_key=?,product_id=? WHERE id=?').run(key, productId, offer.id);
-        if (o.image_url) this.db.prepare('UPDATE products SET image_url=?,image_source=NULL WHERE id=?').run(o.image_url, productId);
+        if (o.image_url) this.db.prepare('UPDATE products SET image_url=?,image_source=NULL WHERE id=? AND image_manual=0 AND image_r2_key IS NULL').run(o.image_url, productId);
         this.indexOffer({...offer,product_id:productId});
         const previous = this.db.prepare('SELECT price FROM price_history WHERE product_key=? AND store=? AND condition=? ORDER BY id DESC LIMIT 1').get(key, store, o.condition || '');
         if (!previous || previous.price !== o.price) this.db.prepare('INSERT INTO price_history(product_key,product_id,store,condition,price) VALUES(?,?,?,?,?)').run(key, productId, store, o.condition || '', o.price);
@@ -152,7 +156,7 @@ export class Database {
     } catch (error) { this.db.exec('ROLLBACK');throw error; }
   }
   catalog(query = '') {
-    const products=this.db.prepare('SELECT id,product_key,name,category,image_url FROM products ORDER BY name COLLATE NOCASE,id').all();
+    const products=this.db.prepare('SELECT id,product_key,name,category,image_url,image_r2_key FROM products ORDER BY name COLLATE NOCASE,id').all().map(p=>({...p,image_url:p.image_r2_key ? `/api/product-image/${p.id}/${p.image_r2_key}` : p.image_url}));
     const byId=new Map(products.map(product=>[product.id,{...product,offers:[],list_count:0,history_count:0}]));
     for (const offer of this.db.prepare('SELECT * FROM offers ORDER BY updated DESC,id DESC').all()) byId.get(offer.product_id)?.offers.push(offer);
     for (const row of this.db.prepare('SELECT offers.product_id,COUNT(*) count FROM items JOIN offers ON offers.id=items.offer_id GROUP BY offers.product_id').all()) {const product=byId.get(row.product_id);if(product)product.list_count=row.count;}
@@ -220,8 +224,9 @@ export class Database {
       try { const host = new URL(value).hostname.toLowerCase(); return host !== 'openfoodfacts.org' && !host.endsWith('.openfoodfacts.org'); }
       catch { return false; }
     };
-    for (const row of this.db.prepare("SELECT product_key,image_url,image_source FROM products WHERE image_url IS NOT NULL AND image_url != ''").all()) {
-      if (usable(row.image_url) && (!row.image_source || usable(row.image_source))) images.set(row.product_key, {image_url:row.image_url,image_source:row.image_source});
+    for (const row of this.db.prepare("SELECT id,product_key,image_url,image_source,image_r2_key FROM products WHERE image_r2_key IS NOT NULL OR (image_url IS NOT NULL AND image_url != '')").all()) {
+      if (row.image_r2_key) images.set(row.product_key, {image_url:`/api/product-image/${row.id}/${row.image_r2_key}`,image_source:row.image_source});
+      else if (usable(row.image_url) && (!row.image_source || usable(row.image_source))) images.set(row.product_key, {image_url:row.image_url,image_source:row.image_source});
     }
     for (const row of this.db.prepare("SELECT product_key,image_url FROM offers WHERE image_url IS NOT NULL AND image_url != '' ORDER BY updated DESC,id DESC").all()) {
       if (!images.has(row.product_key) && usable(row.image_url)) images.set(row.product_key, {image_url:row.image_url,image_source:null});
@@ -268,8 +273,8 @@ export class Database {
   close() { this.db.close(); }
 }
 async function fetchPage(url) { const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 OfertasDaBoa/1.0' }, signal: AbortSignal.timeout(20000) }); if (!res.ok) throw Error(`HTTP ${res.status}`); return res.text(); }
-const auditPaths = new Set(['/api/refresh-store','/api/refresh','/api/offer','/api/list','/api/rename-list','/api/quantity','/api/item','/api/check','/api/remove','/api/delete-list','/api/admin/product/update','/api/admin/product/delete','/api/ai-config','/api/ai-models','/api/instagram-cookies','/api/offer-settings','/api/logout','/api/admin/logout']);
-const adminPaths = new Set(['/api/refresh-store','/api/refresh','/api/offer','/api/admin/product/update','/api/admin/product/delete','/api/ai-config','/api/ai-models','/api/instagram-cookies','/api/offer-settings']);
+const auditPaths = new Set(['/api/refresh-store','/api/refresh','/api/offer','/api/list','/api/rename-list','/api/quantity','/api/item','/api/check','/api/remove','/api/delete-list','/api/admin/product/update','/api/admin/product/delete','/api/admin/product/image','/api/ai-config','/api/ai-models','/api/instagram-cookies','/api/offer-settings','/api/logout','/api/admin/logout']);
+const adminPaths = new Set(['/api/refresh-store','/api/refresh','/api/offer','/api/admin/product/update','/api/admin/product/delete','/api/admin/product/image','/api/ai-config','/api/ai-models','/api/instagram-cookies','/api/offer-settings']);
 const listPaths = new Set(['/api/list','/api/rename-list','/api/quantity','/api/item','/api/check','/api/remove','/api/delete-list']);
 function logError(scope, error) {
   const detail = String(error?.stack || error?.message || error).slice(0,4000).replace(/(https?:\/\/[^\s?]+)\?[^\s]*/gi,'$1?[redacted]').replace(/\b(?:sk-|gh[pousr]_)[A-Za-z0-9_-]{12,}/g,'[redacted]').replace(/(Bearer\s+)[^\s]+/gi,'$1[redacted]');
@@ -286,6 +291,27 @@ function safeStoredStatus(source) {
 }
 
 export function createApp(db, storeProviders = providers, options = {}) {
+  const imageStore = options.imageStore ?? createImageStore(process.env.R2_IMAGES_CREDENTIALS);
+  let imageSyncRunning = false, imageSyncAgain = false;
+  const syncImages = async () => {
+    if (!imageStore) return;
+    if (imageSyncRunning) { imageSyncAgain=true; return; }
+    imageSyncRunning = true;
+    try {
+      const products = db.db.prepare("SELECT id,image_url FROM products WHERE image_r2_key IS NULL AND image_manual=0 AND image_url LIKE 'https://%'").all().filter(product=>{try {const host=new URL(product.image_url).hostname.toLowerCase();return host!=='openfoodfacts.org' && !host.endsWith('.openfoodfacts.org');} catch {return false;}});
+      let saved=0, failed=0;
+      let index=0;
+      await Promise.all(Array.from({length:4},async()=>{
+        while (index<products.length) {
+          const product=products[index++];
+          try { const {bytes}=await downloadImage(product.image_url); const key=await imageStore.put(bytes); saved += Number(db.db.prepare('UPDATE products SET image_r2_key=? WHERE id=? AND image_url=? AND image_r2_key IS NULL AND image_manual=0').run(key,product.id,product.image_url).changes); }
+          catch { failed++; }
+        }
+      }));
+      console.log(JSON.stringify({type:'image-sync',saved,failed}));
+    } catch (error) { logError('image-sync',error); } finally { imageSyncRunning=false; if (imageSyncAgain) {imageSyncAgain=false; void syncImages();} }
+  };
+  if (imageStore) { const timer=setTimeout(syncImages,1000); timer.unref(); }
   const inFlight = new Map();
   const inFlightSources = new Map();
   const google = createGoogleAuth(options.googleAuth);
@@ -304,6 +330,7 @@ export function createApp(db, storeProviders = providers, options = {}) {
         const valid=offers.map(offer=>validImportedOffer(offer)).filter(Boolean);
         if (!valid.length) throw Error('Nenhum produto válido encontrado.');
         const stats=db.saveOffers(provider.id,valid);
+        void syncImages();
         const warnings = offers.warnings || [];
         if (warnings.length) for (const warning of warnings) logError(`source:${provider.id}`,warning);
         const warningNames = [...new Set(warnings.map(w => /^Instagram:/i.test(w) ? 'Instagram' : /^Site:/i.test(w) ? 'Site' : 'fonte'))].join(', ');
@@ -337,6 +364,11 @@ export function createApp(db, storeProviders = providers, options = {}) {
       if (adminRequest && !adminUser?.admin) return json({error:'Acesso restrito.'}, appUser ? 403 : 401);
       if (req.method === 'GET' && path === '/api/ai-config') { if (!user?.admin) return json({error:'Acesso restrito.'},user ? 403 : 401); res.setHeader('Cache-Control','no-store'); return json(await publicConfig(options.aiConfigPath)); }
       if (req.method === 'GET' && path === '/api/admin/products') { res.setHeader('Cache-Control','no-store');return json({products:db.catalog(requestUrl.searchParams.get('q') || '')}); }
+      if (req.method === 'GET' && /^\/api\/product-image\/\d+\/[a-f0-9]{64}$/.test(path)) {
+        const [, , , id, key]=path.split('/');
+        if (!imageStore || !db.db.prepare('SELECT 1 FROM products WHERE id=? AND image_r2_key=?').get(Number(id),key)) return json({error:'Imagem não encontrada.'},404);
+        try { const image=await imageStore.get(key); res.writeHead(200,{'Content-Type':image.type,'Content-Length':image.bytes.length,'Cache-Control':'public, max-age=86400','X-Content-Type-Options':'nosniff'}); return res.end(image.bytes); } catch(error) {logError('image-read',error);return json({error:'Imagem indisponível.'},502);}
+      }
       if (req.method === 'GET' && path === '/api/search') return json(db.search(requestUrl.searchParams.get('q') || ''));
       if (req.method === 'GET' && (path === '/api/data' || path === '/api/admin/data')) { res.setHeader('Cache-Control','no-store'); res.setHeader('Vary','Cookie'); const sources = db.db.prepare('SELECT * FROM sources').all().map(safeStoredStatus); for (const id of inFlight.keys()) { const existing = sources.find(s => s.store === id); if (existing) existing.state = 'running'; else sources.push({store:id,state:'running'}); } const sourceRows = db.db.prepare('SELECT * FROM store_source_status').all().map(row => row.state === 'error' ? {...row,status:sourceError(row.status)} : row); const store_sources = storeProviders.flatMap(p => (p.sourceDefinitions || []).map(def => ({store:p.id,source:def.id,name:def.name,...(sourceRows.find(row => row.store === p.id && row.source === def.id) || {state:'unknown'}),...(inFlightSources.get(p.id)?.has(def.id) ? {state:'running'} : {})}))); return json({ total_products:db.db.prepare('SELECT COUNT(*) AS count FROM products').get().count, irresistible_percent:db.db.prepare("SELECT value FROM app_settings WHERE key='irresistible_percent'").get()?.value ?? 20, offers: db.offers(), lists:user ? db.lists(user.sub) : [], user:user ? {name:user.name,email:user.email,picture:user.picture,admin:!!user.admin} : null, login_available:google.available, sources, store_sources, stores: Object.fromEntries(storeProviders.map(p => [p.id,[p.name,p.url]])) }); }
       if (req.method === 'POST' && path.startsWith('/api/')) {
@@ -347,7 +379,7 @@ export function createApp(db, storeProviders = providers, options = {}) {
         if (listPaths.has(path) && !user) return json({error:'Entre com o Google para usar listas.'},401);
         if (path === '/api/logout') {destroySession(db.db,req);res.setHeader('Set-Cookie',google.clearCookie());return json({ok:true});}
         if (path === '/api/admin/logout') {destroySession(db.db,req,'admin');res.setHeader('Set-Cookie',google.clearCookie('admin'));return json({ok:true});}
-        let body = ''; for await (const chunk of req) { body += chunk; if (body.length > 100000) throw Error('Pedido muito grande'); }
+        let body = ''; for await (const chunk of req) { body += chunk; if (body.length > (path === '/api/admin/product/image' ? 7100000 : 100000)) throw Error('Pedido muito grande'); }
         let data; try { data = JSON.parse(body || '{}'); } catch { throw Error('JSON inválido.'); }
         if (storeProviders.some(provider => provider.id === data.store)) auditDetails.store = data.store;
         for (const key of ['id','list_id','offer_id']) if (Number.isSafeInteger(data[key]) && data[key] > 0) auditDetails[key] = data[key];
@@ -382,6 +414,13 @@ export function createApp(db, storeProviders = providers, options = {}) {
           const results = {};
           for (const provider of storeProviders) results[provider.id] = (await refreshOne(provider)).status;
           return json(results);
+        }
+        if (path === '/api/admin/product/image') {
+          if (!imageStore) return json({error:'Armazenamento de imagens não configurado.'},503);
+          if (!Number.isSafeInteger(data.id) || data.id<1 || typeof data.image!=='string' || data.image.length>7000000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data.image)) return json({error:'Imagem inválida.'},400);
+          if (!db.db.prepare('SELECT 1 FROM products WHERE id=?').get(data.id)) return json({error:'Produto não encontrado.'},404);
+          try { const key=await imageStore.put(Buffer.from(data.image,'base64')); db.db.prepare('UPDATE products SET image_r2_key=?,image_manual=1,image_source=NULL WHERE id=?').run(key,data.id); return json({ok:true}); }
+          catch(error) {logError('image-upload',error);return json({error:'Não foi possível salvar a imagem. Use JPEG, PNG ou WebP de até 5 MB.'},400);}
         }
         if (path === '/api/admin/product/update') {
           if (!Number.isSafeInteger(data.id) || data.id<1) return json({error:'Produto inválido.'},400);
