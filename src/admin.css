@@ -1,2 +1,30 @@
 .backoffice{min-height:100dvh;background:#fff9ef;color:#482c22}.backoffice-header{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:64px;padding:8px max(16px,calc((100vw - 1200px)/2));border-bottom:1px solid #f1dfd0;background:#fffaf3}.backoffice-brand{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:800}.backoffice-brand small{display:block;color:#a27660;font-size:11px;font-weight:600}.backoffice-header-actions{display:flex;align-items:center;gap:4px}.backoffice-header-actions a,.backoffice-header-actions button{display:grid;place-items:center;width:40px;height:40px;border-radius:9px;color:#a53f25}.backoffice-header-actions a:hover,.backoffice-header-actions button:hover{background:#fff0dc}.backoffice-body{display:flex;max-width:1200px;min-height:calc(100dvh - 64px);margin:auto}.backoffice-nav{display:flex;flex-direction:column;gap:4px;width:220px;flex:none;padding:20px 12px;border-right:1px solid #f1dfd0}.backoffice-nav button{display:flex;align-items:center;gap:9px;min-height:44px;padding:0 12px;border-radius:9px;color:#805b47;text-align:left;font-size:13px;font-weight:700}.backoffice-nav button.active{background:#ffead1;color:#a53f25}.backoffice-nav button b{display:grid;place-items:center;min-width:20px;height:20px;margin-left:auto;padding:0 5px;border-radius:10px;background:#b93422;color:#fff;font-size:10px}.backoffice-main{width:100%;min-width:0;padding:24px}.backoffice-heading{display:flex;align-items:end;justify-content:space-between;gap:12px;margin-bottom:16px}.backoffice-heading span{color:#a27660;font-size:11px;font-weight:700}.backoffice-heading h1{font-size:22px;font-weight:800;line-height:1.25}.backoffice-count{color:#8b6a58;font-size:12px;font-weight:600;white-space:nowrap}.backoffice-content{overflow:hidden;border:1px solid #f1dfd0;border-radius:14px;background:#fffaf3}.backoffice-content .admin-form{max-width:600px}.backoffice-content .admin-store-actions{padding-top:10px}.backoffice-login{display:grid;place-items:center;min-height:100dvh;padding:20px;background:#fff9ef}.backoffice-login-card{display:flex;align-items:center;flex-direction:column;gap:14px;width:min(100%,360px);padding:28px 24px;border:1px solid #f1dfd0;border-radius:16px;background:#fffaf3;text-align:center;box-shadow:0 8px 32px #6a301410}.backoffice-login-card h1{font-size:21px;font-weight:800}.backoffice-login-card p{color:#a4392b;font-size:13px}.backoffice-login-link{display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%}.backoffice-return{color:#a53f25;font-size:12px;font-weight:700}.backoffice-nav button:focus-visible,.backoffice-header-actions a:focus-visible,.backoffice-header-actions button:focus-visible,.backoffice-return:focus-visible{outline:2px solid #b93422;outline-offset:2px}@media(max-width:700px){.backoffice-body{display:block}.backoffice-nav{position:sticky;top:64px;z-index:4;flex-direction:row;width:100%;gap:4px;overflow-x:auto;padding:8px 12px;border-right:0;border-bottom:1px solid #f1dfd0;background:#fffaf3;scrollbar-width:none}.backoffice-nav::-webkit-scrollbar{display:none}.backoffice-nav button{flex:none;min-height:40px;gap:6px;padding:0 8px}.backoffice-main{padding:16px}.backoffice-heading h1{font-size:20px}}
 @media(max-width:420px){.backoffice-nav{padding-right:8px;padding-left:8px;gap:2px}.backoffice-nav button{padding:0 5px;gap:4px;font-size:11px}.backoffice-nav button svg{width:15px;height:15px}.backoffice-nav button b{min-width:17px;height:17px;padding:0 3px;font-size:9px}}
+
+.backoffice-content .admin-store-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 16px 12px;
+}
+.backoffice-content .admin-store-actions .cookies-open {
+  min-height: 44px;
+  margin: 0;
+  padding: 0 14px;
+}
+.backoffice-content .stores-list { padding: 0 16px 16px; }
+.backoffice-content .store-entry-row { gap: 4px; padding: 8px 0; }
+.backoffice-content .store-info { min-height: 48px; gap: 8px; }
+.backoffice-content .store-detail { padding: 4px 4px 16px 18px; }
+.backoffice-content .store-detail .cookies-open { min-height: 44px; padding: 0 12px; }
+.backoffice-content .admin-form { padding: 16px 20px 20px; }
+.backoffice-content .admin-form label { margin-top: 16px; }
+.backoffice-content .admin-form label:first-child { margin-top: 0; }
+.backoffice-content .admin-form input,
+.backoffice-content .admin-form select { height: 44px; }
+.backoffice-content .ai-model-row .cookies-open { height: 44px; margin: 0; padding: 0 12px; }
+.backoffice-content .admin-form .primary { min-height: 44px; margin-top: 20px; }
+.backoffice-content .review-list { padding: 0 16px 16px; }
+.backoffice-content .review-offer { padding: 16px 0; }
+.backoffice-content .review-actions { margin-top: 16px; }
+.backoffice-content .review-actions button { min-height: 44px; }
+@media(max-width:700px) { .backoffice-nav button { min-height: 44px; } }
