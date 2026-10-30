@@ -343,7 +343,7 @@ export function createApp(db, storeProviders = providers, options = {}) {
         return json({ error: 'Não encontrado' }, 404);
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') return json({ error: 'Não encontrado' }, 404);
-      if (path === '/admin') { res.writeHead(308, {'Location':'/admin/'}); return res.end(); }
+      if (path === '/admin') { res.writeHead(308, {'Location':`/admin/${requestUrl.search}`}); return res.end(); }
       const name = path === '/' ? 'index.html' : path === '/admin/' ? 'admin/index.html' : path.slice(1);
       const root = resolve('dist'), file = resolve(root, name);
       if (!file.startsWith(root + '/')) return json({ error: 'Não encontrado' }, 404);

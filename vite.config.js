@@ -17,7 +17,7 @@ export default defineConfig({
       const db = new Database(process.env.DATABASE_PATH || 'ofertas.sqlite3');
       const api = createApp(db, undefined, { googleAuth });
       server.middlewares.use((req, res, next) => {
-        if (req.url?.startsWith('/api/') || req.url?.startsWith('/auth/google')) api.emit('request', req, res);
+        if (req.url?.startsWith('/api/') || req.url?.startsWith('/auth/google') || req.url === '/admin' || req.url?.startsWith('/admin?')) api.emit('request', req, res);
         else next();
       });
       server.httpServer?.once('close', () => { db.close(); });
