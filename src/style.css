@@ -53,3 +53,7 @@
 .account-email{max-width:100%;padding:10px 12px;border-bottom:1px solid #f1dfd0;color:#805b47;font-size:12px;white-space:nowrap;overflow-x:auto;user-select:text}
 
 .history-chart-scroll{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}.history-chart-scroll:focus-visible{outline:2px solid #b93422;outline-offset:2px;border-radius:4px}.history-chart-scroll svg{max-width:none}
+
+.price-trend{display:inline-flex;align-items:center;vertical-align:middle}.price-up{color:#b93422}.price-down{color:#328147}.price-drop-filter svg{color:#328147}.price-drop-filter.active svg{color:#fff}
+
+.offer-count{flex:none}.market-filter{flex:1;justify-content:flex-end}.market-filter select{width:100%;text-overflow:ellipsis}

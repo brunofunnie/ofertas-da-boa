@@ -58,7 +58,8 @@ function PriceTrend({history}) {
   const change=priceTrend(history);
   if (!change) return null;
   const label=`${change > 0 ? 'Subiu' : 'Caiu'} de ${money(history.at(-2).price)} para ${money(history.at(-1).price)}`;
-  return <span className={`price-trend ${change > 0 ? 'price-up' : 'price-down'}`} title={label} aria-label={label} role="img"><Icon icon={change > 0 ? IconArrowUp : IconArrowDown} size={13}/></span>;
+  const TrendIcon=change > 0 ? IconArrowUp : IconArrowDown;
+  return <span className={`price-trend ${change > 0 ? 'price-up' : 'price-down'}`} title={label} aria-label={label} role="img"><TrendIcon size={18} stroke={3} aria-hidden="true"/></span>;
 }
 function HistoryButton({offer, onOpen}) { return <button type="button" className="history-button" onClick={() => onOpen(offer)} aria-label={`Ver histórico de ${offer.name}`} title="Histórico de preços"><Icon icon={IconChartLine}/></button>; }
 function AddIcon() { return <Icon icon={IconPlus}/>; }
@@ -88,14 +89,14 @@ function GridProduct({group, stores, onPreview, onAdd, onHistory}) {
 function App() {
   const [data, setData] = useState({ offers: [], lists: [], sources: [], stores: {}, user:null, total_products:null });
   useEffect(() => { const splash = document.getElementById('splash'); const timer = setTimeout(() => splash?.remove(), 2200); return () => clearTimeout(timer); }, []);
-  const [irresistibleOnly, setIrresistibleOnly] = useState(false);
+  const [irresistibleOnly, setIrresistibleOnly] = useState(false), [priceDropOnly, setPriceDropOnly] = useState(false);
   const [view, setView] = useState('ofertas'), [category, setCategory] = useState('Todos'), [query, setQuery] = useState(''), [store, setStore] = useState('');
   const [searchResults, setSearchResults] = useState(null);
   const [searchOpen, setSearchOpen] = useState(false), [priceOpen, setPriceOpen] = useState(false);
   const [priceMin, setPriceMin] = useState(''), [priceMax, setPriceMax] = useState('');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const moreOffers = useRef(null);
-  useEffect(() => { setVisibleCount(PAGE_SIZE); }, [category, store, query, irresistibleOnly, priceMin, priceMax]);
+  useEffect(() => { setVisibleCount(PAGE_SIZE); }, [category, store, query, irresistibleOnly, priceDropOnly, priceMin, priceMax]);
   const [gridView, setGridView] = useState(() => { try {return localStorage.getItem('offers-view') === 'grid';} catch {return false;} });
   function toggleGrid() {setGridView(current => {const next=!current;try {localStorage.setItem('offers-view',next?'grid':'list');} catch {}return next;});}
   const [showTop, setShowTop] = useState(false);
@@ -137,7 +138,7 @@ function App() {
   useEffect(() => { if (!hasIrresistible) setIrresistibleOnly(false); }, [hasIrresistible]);
   const minPrice = parsePriceBound(priceMin), maxPrice = parsePriceBound(priceMax);
   const priceError = minPrice === undefined || maxPrice === undefined ? 'Use valores válidos, com até dois decimais.' : minPrice !== null && maxPrice !== null && minPrice > maxPrice ? 'O mínimo deve ser menor ou igual ao máximo.' : '';
-  const offers = data.offers.filter(o => !priceError && matchesPriceRange(o, minPrice, maxPrice) && (!irresistibleOnly || isIrresistible(o, threshold)) && (category === 'Todos' || o.category === category) && (!store || o.store === store) && (!matchingKeys || matchingKeys.has(o.product_key || `offer:${o.id}`)));
+  const offers = data.offers.filter(o => !priceError && matchesPriceRange(o, minPrice, maxPrice) && (!irresistibleOnly || isIrresistible(o, threshold)) && (!priceDropOnly || priceTrend(o.history)<0) && (category === 'Todos' || o.category === category) && (!store || o.store === store) && (!matchingKeys || matchingKeys.has(o.product_key || `offer:${o.id}`)));
   const groups = [...offers.reduce((map, offer) => {
     const key = offer.product_key || `offer:${offer.id}`;
     if (!map.has(key)) map.set(key, []);
@@ -165,7 +166,7 @@ function App() {
     {view === 'ofertas' ? <main className="offers-content">
 
       <CategoryBar selected={category} onSelect={setCategory} />
-      <div className="my-2 flex items-center justify-between gap-2 text-xs text-[#92705c]"><div className="offer-count">{hasIrresistible && <button type="button" className={`irresistible-filter${irresistibleOnly ? ' active' : ''}`} aria-pressed={irresistibleOnly} onClick={() => setIrresistibleOnly(current => !current)}><Icon icon={IconBolt} className="irresistible-bolt" size={15}/>Irresistíveis</button>}</div><div className="flex min-w-0 items-center gap-1"><select aria-label="Supermercado" value={store} onChange={e => setStore(e.target.value)} className="min-w-0 max-w-48 bg-transparent py-2 font-semibold text-[#a53f25]"><option value="">Todos os mercados</option>{Object.entries(data.stores).map(([id, value]) => <option key={id} value={id}>{value[0]}</option>)}</select></div></div>
+      <div className="my-2 flex items-center justify-between gap-2 text-xs text-[#92705c]"><div className="offer-count">{hasIrresistible && <button type="button" className={`irresistible-filter${irresistibleOnly ? ' active' : ''}`} aria-pressed={irresistibleOnly} onClick={() => setIrresistibleOnly(current => !current)}><Icon icon={IconBolt} className="irresistible-bolt" size={15}/>Irresistíveis</button>}<button type="button" className={`irresistible-filter price-drop-filter${priceDropOnly ? ' active' : ''}`} aria-pressed={priceDropOnly} onClick={() => setPriceDropOnly(current => !current)}><Icon icon={IconArrowDown} size={15}/>Baixaram</button></div><div className="market-filter flex min-w-0 items-center gap-1"><select aria-label="Supermercado" value={store} onChange={e => setStore(e.target.value)} className="min-w-0 max-w-48 bg-transparent py-2 font-semibold text-[#a53f25]"><option value="">Todos os mercados</option>{Object.entries(data.stores).map(([id, value]) => <option key={id} value={id}>{value[0]}</option>)}</select></div></div>
       <div className={gridView && groups.length ? "products-grid" : "space-y-2"}>{groups.length ? groups.slice(0,visibleCount).map(group => gridView ? <GridProduct key={group[0].product_key || group[0].id} group={group} stores={data.stores} onPreview={setPreviewImage} onHistory={setHistoryOffer} onAdd={chooseOffer} /> : <section key={group[0].product_key || group[0].id} className="overflow-hidden rounded-xl border border-[#f1dfd0] bg-white">{groupEqualPrices(group).map((storeGroup,_,allGroups) => <StorePrice key={storeGroup.key} storeGroup={storeGroup} allGroups={allGroups} stores={data.stores} onPreview={setPreviewImage} onAdd={chooseOffer} onHistory={setHistoryOffer}/>)}</section>) : <div className="rounded-xl border border-[#f1dfd0] bg-white px-4 py-12 text-center text-sm text-[#987766]">Nenhum produto encontrado.</div>}</div>
       {visibleCount < groups.length && <button ref={moreOffers} type="button" className="load-more" onClick={() => setVisibleCount(count => Math.min(count + PAGE_SIZE, groups.length))}>Carregar mais</button>}
 
@@ -177,7 +178,7 @@ function App() {
         <div className={`list-total-bar ${showTop ? 'has-top-button' : ''}`}><div><span>Total da lista</span><strong>{money(listTotal)}</strong></div></div>
       </> : <div className="rounded-xl border border-[#f1dfd0] bg-white px-4 py-12 text-center text-sm text-[#987766]">Nenhuma lista criada.</div>}
     </main>}
-    {view === 'ofertas' && (query.trim() || category !== 'Todos' || store || irresistibleOnly || priceMin || priceMax) && <div className="filter-result" role="status">{query.trim() && searchResults === null && !priceError ? 'Buscando…' : `${groups.length.toLocaleString('pt-BR')} ${groups.length === 1 ? 'produto encontrado' : 'produtos encontrados'}`}</div>}
+    {view === 'ofertas' && (query.trim() || category !== 'Todos' || store || irresistibleOnly || priceDropOnly || priceMin || priceMax) && <div className="filter-result" role="status">{query.trim() && searchResults === null && !priceError ? 'Buscando…' : `${groups.length.toLocaleString('pt-BR')} ${groups.length === 1 ? 'produto encontrado' : 'produtos encontrados'}`}</div>}
     {showTop && <button type="button" className={`scroll-top ${view === 'listas' && activeList ? 'in-list-footer' : ''}`} aria-label="Voltar ao topo" onClick={() => window.scrollTo({top:0, behavior:'instant'})}><Icon icon={IconArrowUp}/></button>}
     <Toast text={addedToast?.text} top/>
     {historyOffer && <HistoryDialog offer={historyOffer} store={data.stores[historyOffer.store]?.[0] || historyOffer.store} onClose={() => setHistoryOffer(null)}/>}
