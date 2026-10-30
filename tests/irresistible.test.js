@@ -17,7 +17,7 @@ test('somente admin pode alterar o limite persistente e público', async () => {
   const app = createApp(db, []); await new Promise(resolve => app.listen(0, '127.0.0.1', resolve));
   const root = `http://127.0.0.1:${app.address().port}`;
   const cookie = user => `ofertas_session=${createSession(db.db,user)}`;
-  const admin = cookie({sub:'admin',name:'Admin',email:'brunodeoliveira@gmail.com'});
+  const admin = `ofertas_admin_session=${createSession(db.db,{sub:'admin',name:'Admin',email:'brunodeoliveira@gmail.com'},'admin')}`;
   const user = cookie({sub:'user',name:'User',email:'user@example.com'});
   const post = (value,c) => fetch(`${root}/api/offer-settings`,{method:'POST',headers:{'content-type':'application/json',...(c ? {cookie:c} : {})},body:JSON.stringify({irresistible_percent:value})});
   try {

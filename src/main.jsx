@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { IconSettings, IconSearch, IconAdjustmentsHorizontal, IconList, IconLayoutGrid, IconRefresh, IconExternalLink, IconChevronUp, IconChevronDown, IconChartLine, IconPlus, IconBolt, IconArrowUp, IconArrowDown, IconX, IconTrash, IconShoppingBag, IconBrandWhatsapp } from '@tabler/icons-react';
+import { IconSearch, IconAdjustmentsHorizontal, IconList, IconLayoutGrid, IconChartLine, IconPlus, IconBolt, IconArrowUp, IconArrowDown, IconX, IconTrash, IconShoppingBag, IconBrandWhatsapp } from '@tabler/icons-react';
 import './style.css';
 import { groupListItems } from './list-groups.js';
 import { formatShoppingList } from './share-list.js';
@@ -37,17 +37,6 @@ function AccountMenu({ user, onLogout }) {
     <div className="account-popover"><button type="button" onClick={() => { menu.current.open = false; onLogout(); }}>Sair</button></div>
   </details>;
 }
-function OfferSettingsPanel({ percent, onSaved }) {
-  const [value, setValue] = useState(String(percent)), [error, setError] = useState(''), [busy, setBusy] = useState(false);
-  async function save(event) {
-    event.preventDefault(); setBusy(true); setError('');
-    try { await post('offer-settings', { irresistible_percent: Number(value) }); await onSaved(); }
-    catch (e) { setError(e.message); } finally { setBusy(false); }
-  }
-  return <form className="admin-form ai-panel" onSubmit={save}>
-    <label htmlFor="irresistible-percent">Desconto mínimo para ofertas irresistíveis (%)</label><input id="irresistible-percent" type="number" min="1" max="100" step="1" value={value} onChange={event => setValue(event.target.value)} required /><button className="primary" type="submit" disabled={busy}>Salvar</button>{error && <p className="store-error" role="alert">{error}</p>}
-  </form>;
-}
 function Icon({ icon: Component, size = 18, className }) { return <Component aria-hidden="true" className={className} size={size} stroke={1.8}/>; }
 function ProductImage({ src, name, onOpen }) {
   const [failed, setFailed] = useState(false);
@@ -64,53 +53,7 @@ function ImageLightbox({ image, onClose }) {
 function SearchIcon() { return <Icon icon={IconSearch}/>; }
 function PriceFilterIcon() { return <Icon icon={IconAdjustmentsHorizontal}/>; }
 function ViewIcon({grid}) { return <Icon icon={grid ? IconList : IconLayoutGrid}/>; }
-function AdminIcon() { return <Icon icon={IconSettings} size={20}/>; }
-function RefreshIcon({ spinning }) { return <Icon icon={IconRefresh} className={spinning ? 'refresh-spin' : undefined}/>; }
 function Toast({ text, top = false }) { return text ? <div className={`store-toast${top ? ' store-toast-top' : ''}`} role="status">{text}</div> : null; }
-function ReviewPanel({offers, currentOffers, stores, onReview}) {
-  const [busy,setBusy]=useState(null), [error,setError]=useState('');
-  async function decide(id, decision) {setBusy(id);setError('');try {await onReview(id,decision);}catch(e){setError(e.message);}finally{setBusy(null);}}
-  return <div className="review-list">{error && <p className="store-error" role="alert">{error}</p>}{offers.length ? offers.map(offer=>{const current=currentOffers.find(item=>item.store===offer.store && item.name===offer.name);return <article className="review-offer" key={offer.id}><div className="review-name">{offer.name}</div><div className="review-meta">{stores[offer.store]?.[0] || offer.store} · até {offer.valid_until?.split('-').reverse().join('/') || 'sem data'}</div><div className="review-price">{money(offer.price)}{offer.club_price && <small>Clube {money(offer.club_price)}</small>}</div>{current && <div className="review-meta">Preço atual: {money(current.price)}</div>}{offer.url && <a className="review-link" href={offer.url} target="_blank" rel="noopener noreferrer">Ver folheto ou publicação <Icon icon={IconExternalLink} size={11}/></a>}<div className="review-actions"><button type="button" disabled={busy!==null} onClick={()=>decide(offer.id,'reject')} aria-label={`Rejeitar ${offer.name}`}>Rejeitar</button><button type="button" disabled={busy!==null} onClick={()=>decide(offer.id,'approve')} aria-label={`Aprovar ${offer.name}`}>Aprovar</button></div></article>;}) : <p className="review-empty">Nenhuma oferta pendente.</p>}</div>;
-}
-function StoreSourceList({ sources, formatDate }) {
-  if (sources.length < 2) return null;
-  const labels = {ok:'Atualizado',error:'Falhou',running:'Atualizando',unknown:'Sem atualização',unconfigured:'Não configurado'};
-  return <div className="store-source-list" aria-label="Fontes de dados">{sources.map(source => <div className="store-source" key={source.source}><span className={`status-dot status-${source.state}`} aria-hidden="true"/><span className="store-source-content"><strong>{source.name}</strong><small>{labels[source.state] || 'Sem atualização'}{source.state === 'ok' && source.total != null ? ` · ${source.total} produtos` : ''}{source.updated && source.state !== 'running' ? ` · ${formatDate(source.updated)}` : ''}</small>{source.state === 'error' && source.status && <small className="store-error">{source.status}</small>}</span></div>)}</div>;
-}
-function AiSettingsPanel({onSaved}) {
-  const [config,setConfig]=useState(null), [provider,setProvider]=useState('gemini'), [baseUrl,setBaseUrl]=useState('https://api.openai.com/v1'), [model,setModel]=useState(''), [key,setKey]=useState(''), [models,setModels]=useState([]), [error,setError]=useState(''), [busy,setBusy]=useState(false);
-  useEffect(() => { fetch('/api/ai-config').then(r => {if(!r.ok) throw Error('Não foi possível carregar a configuração.');return r.json();}).then(data => {setConfig(data);setProvider(data.provider);setBaseUrl(data.openai.base_url);setModel(data[data.provider].model);}).catch(e => setError(e.message)); }, []);
-  function selectProvider(value) {setProvider(value);setModel(config?.[value]?.model || '');setKey('');setModels([]);setError('');}
-  const data = () => ({provider,base_url:baseUrl,model,api_key:key});
-  async function fetchModels() {setBusy(true);setError('');try {const result=await post('ai-models',data());setModels(result.models);if(!result.models.length)setError('Nenhum modelo disponível.');}catch(e){setError(e.message);}finally{setBusy(false);}}
-  async function save(e) {e.preventDefault();setBusy(true);setError('');try {const result=await post('ai-config',data());setConfig(result);setKey('');onSaved();}catch(e){setError(e.message);}finally{setBusy(false);}}
-  return <form className="admin-form ai-panel" onSubmit={save}><label htmlFor="ai-provider">Provedor</label><select id="ai-provider" value={provider} onChange={e=>selectProvider(e.target.value)} disabled={!config || busy}><option value="gemini">Gemini</option><option value="openai">OpenAI compatível</option></select>{provider==='openai' && <><label htmlFor="ai-url">URL da API</label><input id="ai-url" type="url" value={baseUrl} onChange={e=>setBaseUrl(e.target.value)} placeholder="https://api.openai.com/v1" required /></>}<label htmlFor="ai-key">Chave da API</label><input id="ai-key" type="password" autoComplete="new-password" value={key} onChange={e=>setKey(e.target.value)} placeholder={config?.[provider]?.has_key ? 'Chave configurada' : 'Opcional se o provedor não exigir'} /><label htmlFor="ai-model">Modelo</label><div className="ai-model-row"><input id="ai-model" list="ai-models" value={model} onChange={e=>setModel(e.target.value)} placeholder="Digite ou escolha" required /><button type="button" className="cookies-open" disabled={busy || !config} onClick={fetchModels}>Listar</button></div><datalist id="ai-models">{models.map(item=><option key={item} value={item}/>)}</datalist>{error && <p className="store-error" role="alert">{error}</p>}<button className="primary w-full" disabled={busy || !config}>{busy ? 'Aguarde…' : 'Salvar'}</button></form>;
-}
-function InstagramCookiesDialog({ onClose, onSaved }) {
-  const dialog = useRef(null), [value, setValue] = useState(''), [error, setError] = useState(''), [saving, setSaving] = useState(false);
-  useEffect(() => { dialog.current.showModal(); }, []);
-  async function save(e) {
-    e.preventDefault(); setSaving(true); setError('');
-    try { await post('instagram-cookies', {cookies:value}); onSaved(); dialog.current.close(); }
-    catch (e) { setError(e.message); } finally { setSaving(false); }
-  }
-  return <dialog ref={dialog} className="cookies-dialog" aria-labelledby="cookies-title" onClose={e => { e.stopPropagation(); onClose(); }} onClick={e => { if (e.target === dialog.current && !saving) dialog.current.close(); }}><form className="cookies-panel" onSubmit={save}><div className="stores-heading"><h2 id="cookies-title">Cookies do Instagram</h2><button type="button" className="icon" aria-label="Fechar" disabled={saving} onClick={() => dialog.current.close()}><Icon icon={IconX} size={16}/></button></div><label htmlFor="instagram-cookies">Novo JSON de cookies</label><textarea id="instagram-cookies" value={value} onChange={e => setValue(e.target.value)} placeholder="Cole o JSON aqui" spellCheck="false" autoCapitalize="off" autoComplete="off" required autoFocus/><p className="cookies-hint">Cole o JSON completo para substituir a sessão atual.</p>{error && <p className="store-error" role="alert">{error}</p>}<button className="primary w-full" disabled={saving}>{saving ? 'Salvando…' : 'Salvar'}</button></form></dialog>;
-}
-function StoresPanel({ data, refreshing, onRefresh, onRefreshAll, busy, onCookiesSaved }) {
-  const [expanded, setExpanded] = useState(null), [editingCookies, setEditingCookies] = useState(false);
-  const formatDate = value => value ? new Date(value.replace(' ', 'T') + 'Z').toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}) : 'Ainda não atualizada';
-  return <><div className="admin-store-actions"><button type="button" className="cookies-open" onClick={onRefreshAll} disabled={busy || Object.values(refreshing).some(Boolean)}><RefreshIcon spinning={busy}/> Atualizar todos</button></div><div className="stores-list">{Object.entries(data.stores).map(([id, value]) => {
-    const source = data.sources.find(s => s.store === id), state = refreshing[id] || source?.state === 'running' ? 'running' : source?.state || 'unknown';
-    const stateLabel = {ok:'Atualizado',error:'Falhou',running:'Atualizando',unknown:'Sem atualização'}[state] || 'Sem atualização';
-    return <section className="store-entry" key={id}><div className="store-entry-row"><button type="button" className="store-info" aria-expanded={expanded === id} onClick={() => setExpanded(expanded === id ? null : id)}><span className={`status-dot status-${state}`} aria-hidden="true"/><span className="store-info-text"><strong>{value[0]}</strong><small>{stateLabel} · {formatDate(source?.last_success)}</small></span><span className="store-chevron" aria-hidden="true"><Icon icon={expanded === id ? IconChevronUp : IconChevronDown} size={12}/></span></button><a className="store-link" href={value[1]} target="_blank" rel="noopener noreferrer" aria-label={`Abrir site de ${value[0]} em nova aba`} title={`Abrir site de ${value[0]}`}><Icon icon={IconExternalLink} size={16}/></a>{data.user?.admin && <button type="button" className="store-refresh" disabled={state === 'running'} onClick={() => onRefresh(id)} aria-label={`Atualizar ${value[0]}`} title={`Atualizar ${value[0]}`}><RefreshIcon spinning={state === 'running'}/></button>}</div>{expanded === id && <div className="store-detail">{source?.total != null ? <><div className="store-metrics"><span><strong>{source.total}</strong> consultados</span><span><strong>{source.new_count}</strong> novos</span><span><strong>{source.changed_count}</strong> alterados</span></div>{source?.state === 'error' && !source?.status?.startsWith('Atualização parcial:') && <small>Contagens da última atualização concluída.</small>}</> : <span>Sem contagens disponíveis.</span>}{source?.state === 'error' && <p className="store-error">{source.status}</p>}<StoreSourceList sources={(data.store_sources || []).filter(item => item.store === id)} formatDate={formatDate}/>{data.user?.admin && id === 'santo-clube' && <button type="button" className="cookies-open" onClick={() => setEditingCookies(true)}>Cookies do Instagram</button>}</div>}</section>;
-  })}</div>{editingCookies && <InstagramCookiesDialog onClose={() => setEditingCookies(false)} onSaved={onCookiesSaved}/>}</>;
-}
-function AdminDialog({data, refreshing, onRefresh, onRefreshAll, busy, percent, onSettingsSaved, onAiSaved, onCookiesSaved, onReview, toast, onClose}) {
-  const dialog = useRef(null), [tab, setTab] = useState('stores');
-  useEffect(() => { dialog.current.showModal(); }, []);
-  const tabs = [['stores','Supermercados'],['review',`Revisão${data.pending_offers?.length ? ` · ${data.pending_offers.length}` : ''}`],['ai','IA'],['offers','Ofertas']];
-  return <dialog ref={dialog} className="stores-dialog" aria-labelledby="admin-title" onClose={onClose} onClick={event => {if (event.target === dialog.current) dialog.current.close();}}><div className="stores-panel admin-panel"><div className="stores-heading"><h2 id="admin-title">Administração</h2><button type="button" className="icon" aria-label="Fechar administração" onClick={() => dialog.current.close()} autoFocus><Icon icon={IconX} size={16}/></button></div><nav className="admin-tabs" aria-label="Seções da administração">{tabs.map(([id,label]) => <button type="button" key={id} className={tab === id ? 'active' : ''} aria-pressed={tab === id} onClick={() => setTab(id)}>{label}</button>)}</nav>{tab === 'stores' && <StoresPanel data={data} refreshing={refreshing} onRefresh={onRefresh} onRefreshAll={onRefreshAll} busy={busy} onCookiesSaved={onCookiesSaved}/>}{tab === 'review' && <ReviewPanel offers={data.pending_offers || []} currentOffers={data.offers} stores={data.stores} onReview={onReview}/>}{tab === 'ai' && <AiSettingsPanel onSaved={onAiSaved}/>}{tab === 'offers' && <OfferSettingsPanel percent={percent} onSaved={onSettingsSaved}/>}</div><Toast text={toast}/></dialog>;
-}
 function PriceChart({ history }) {
   if (!history || history.length < 2) return null;
   const values = history.map(point => point.price), min = Math.min(...values), max = Math.max(...values);
@@ -153,7 +96,7 @@ function GridProduct({group, stores, onPreview, onAdd, onHistory}) {
 function App() {
   const [data, setData] = useState({ offers: [], lists: [], sources: [], stores: {}, user:null, total_products:null });
   useEffect(() => { const splash = document.getElementById('splash'); const timer = setTimeout(() => splash?.remove(), 2200); return () => clearTimeout(timer); }, []);
-  const [irresistibleOnly, setIrresistibleOnly] = useState(false), [adminOpen, setAdminOpen] = useState(false);
+  const [irresistibleOnly, setIrresistibleOnly] = useState(false);
   const [view, setView] = useState('ofertas'), [category, setCategory] = useState('Todos'), [query, setQuery] = useState(''), [store, setStore] = useState('');
   const [searchResults, setSearchResults] = useState(null);
   const [searchOpen, setSearchOpen] = useState(false), [priceOpen, setPriceOpen] = useState(false);
@@ -172,17 +115,14 @@ function App() {
   const [historyOffer, setHistoryOffer] = useState(null);
   const [removal, setRemoval] = useState(null);
   const [removing, setRemoving] = useState(false);
-  const [modal, setModal] = useState(''), [selected, setSelected] = useState(null), [message, setMessage] = useState(''), [busy, setBusy] = useState(false);
-  const [refreshing, setRefreshing] = useState({}), [toast, setToast] = useState(''), [addedToast, setAddedToast] = useState(null);
-  useEffect(() => { if (!data.user?.admin) setAdminOpen(false); }, [data.user?.admin]);
+  const [modal, setModal] = useState(''), [selected, setSelected] = useState(null), [message, setMessage] = useState('');
+  const [addedToast, setAddedToast] = useState(null);
   useEffect(() => {const url=new URL(window.location.href);if(url.searchParams.get('login')==='erro'){setMessage('Não foi possível entrar com o Google. Tente novamente.');url.searchParams.delete('login');window.history.replaceState(null,'',url.pathname+url.search+url.hash);}}, []);
-  useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(''), 6000); return () => clearTimeout(timer); }, [toast]);
   useEffect(() => { if (!addedToast) return; const timer = setTimeout(() => setAddedToast(null), 3500); return () => clearTimeout(timer); }, [addedToast]);
   async function load() { const response = await fetch('/api/data'); if (!response.ok) throw Error('Não foi possível carregar os dados.'); setData(await response.json()); }
   function chooseOffer(id, priceType = 'regular') { if (!data.user) {setModal('login');return;} setSelected({id,priceType}); setModal('choose'); }
   function startLogin(e) {if (data.login_available === false) {e.preventDefault();setMessage('Login Google ainda não configurado.');setModal('');}}
   async function logout() { try {await post('logout');setActiveListId(null);setSelected(null);await load();} catch(e){setMessage(e.message);} }
-  useEffect(() => { if (!busy && !Object.values(refreshing).some(Boolean)) return; load().catch(() => {}); const timer = setInterval(() => load().catch(() => {}), 2000); return () => clearInterval(timer); }, [busy, refreshing]);
   useEffect(() => { load().catch(e => setMessage(e.message)); const timer = setInterval(() => { if (!document.hidden) load().catch(() => {}); }, 30000); return () => clearInterval(timer); }, []);
   useEffect(() => {
     if (!query.trim()) { setSearchResults(null); return; }
@@ -198,13 +138,6 @@ function App() {
   }, [query, data.offers]);
   function closeSearch() { setQuery(''); setSearchResults(null); setSearchOpen(false); searchTrigger.current?.focus({preventScroll:true}); }
   async function action(fn) { try { await fn(); await load(); } catch (e) { setMessage(e.message); } }
-  async function refresh() { setBusy(true); try { const result = await post('refresh'); await load(); const failed = Object.values(result).filter(status => status.startsWith('Não atualizado:') || status.startsWith('Atualização parcial:')).length; setToast(failed ? `Atualização concluída · ${failed} com falha` : 'Supermercados atualizados'); } catch (e) { setToast(`Falha na atualização: ${e.message}`); } finally { setBusy(false); } }
-  async function refreshStore(id) {
-    setRefreshing(current => ({...current, [id]:true}));
-    try { const result = await post('refresh-store', {store:id}); await load(); setToast(result.state === 'ok' ? `${data.stores[id][0]} atualizado · ${result.new_count} novos, ${result.changed_count} alterados` : result.status.startsWith('Atualização parcial:') ? `${data.stores[id][0]}: atualização parcial` : `${data.stores[id][0]}: falha na atualização`); }
-    catch (e) { setToast(`Falha na atualização: ${e.message}`); }
-    finally { setRefreshing(current => ({...current, [id]:false})); }
-  }
   async function createList(e) { e.preventDefault(); const form = e.currentTarget; await action(async () => { const name = new FormData(form).get('name'), result = await post('list', { name }); if (selected) { await post('item', { list_id: result.id, offer_id: selected.id, price_type: selected.priceType }); setAddedToast({text:`Adicionado à lista ${name}`}); } setActiveListId(result.id); setSelected(null); setModal(''); }); }
   const matchingKeys = query.trim() ? new Set((searchResults || []).map(o => o.product_key || `offer:${o.id}`)) : null;
   const threshold = data.irresistible_percent ?? 20;
@@ -230,7 +163,7 @@ function App() {
   const listGroups = activeList ? groupListItems(activeList.items, data.stores) : [];
   const listTotal = listGroups.reduce((sum, group) => sum + group.total, 0);
   return <div className="mx-auto min-h-screen max-w-3xl px-4 pb-12 sm:px-6">
-    <div className="app-header"><header className="flex h-[52px] items-center justify-between border-b border-[#f3ded0]"><div className="flex items-center gap-2.5"><img src="/logo.svg" alt="" width="32" height="32" className="size-8 shrink-0" /><h1 className="text-lg font-bold tracking-tight">Ofertas da Boa</h1></div><div className="header-actions">{data.user?.admin && <button type="button" className="admin-trigger" aria-label="Administração" title="Administração" onClick={() => setAdminOpen(true)}><AdminIcon />{!!data.pending_offers?.length && <span className="admin-badge">{data.pending_offers.length}</span>}</button>}{data.user ? <AccountMenu user={data.user} onLogout={logout} /> : <a href="/auth/google" onClick={startLogin} className="account-button">Entrar</a>}</div></header>
+    <div className="app-header"><header className="flex h-[52px] items-center justify-between border-b border-[#f3ded0]"><div className="flex items-center gap-2.5"><img src="/logo.svg" alt="" width="32" height="32" className="size-8 shrink-0" /><h1 className="text-lg font-bold tracking-tight">Ofertas da Boa</h1></div><div className="header-actions">{data.user ? <AccountMenu user={data.user} onLogout={logout} /> : <a href="/auth/google" onClick={startLogin} className="account-button">Entrar</a>}</div></header>
     <nav className="flex items-center gap-2 border-b border-[#f3ded0]" aria-label="Navegação">{[['ofertas','Ofertas'],['listas',`Listas (${data.lists.length})`]].map(([id,label]) => <button key={id} className={`tab ${view === id ? 'active' : ''}`} onClick={() => setView(id)}>{label}</button>)}<div className="nav-actions">{view === 'ofertas' && <button type="button" className="search-trigger" ref={searchTrigger} aria-label={searchOpen ? 'Fechar busca' : 'Abrir busca'} aria-expanded={searchOpen} onClick={() => { if (searchOpen) closeSearch(); else setSearchOpen(true); }}><SearchIcon /></button>}{view === 'ofertas' && <button type="button" className={`search-trigger price-filter-trigger${priceMin || priceMax ? ' active' : ''}`} aria-label={priceOpen ? 'Fechar filtro de preço' : 'Filtrar por preço'} aria-expanded={priceOpen} aria-controls="price-filter" onClick={() => setPriceOpen(current => !current)}><PriceFilterIcon /></button>}{view === 'ofertas' && <button type="button" className="search-trigger" onClick={toggleGrid} aria-pressed={gridView} aria-label={gridView ? 'Mostrar em lista' : 'Mostrar em grade'} title={gridView ? 'Mostrar em lista' : 'Mostrar em grade'}><ViewIcon grid={gridView}/></button>}</div></nav>
       {view === 'ofertas' && searchOpen && <div className="search-dock"><div className="search flex min-w-0 items-center gap-2"><SearchIcon /><input autoFocus value={query} onChange={e => { setSearchResults(null); setQuery(e.target.value); }} onKeyDown={e => { if (e.key === 'Escape') closeSearch(); }} placeholder="Buscar produto" aria-label="Buscar produto" className="w-full min-w-0 outline-none" /><button className="search-close" type="button" aria-label="Fechar busca" onClick={closeSearch}><Icon icon={IconX} size={16}/></button></div></div>}
       {view === 'ofertas' && priceOpen && <div id="price-filter" className="price-filter"><label>Preço mínimo <span className="price-input"><span>R$</span><input type="text" inputMode="decimal" placeholder="0,00" aria-label="Preço mínimo" value={priceMin} onChange={event => setPriceMin(event.target.value)} aria-invalid={!!priceError}/></span></label><label>Preço máximo <span className="price-input"><span>R$</span><input type="text" inputMode="decimal" placeholder="Sem limite" aria-label="Preço máximo" value={priceMax} onChange={event => setPriceMax(event.target.value)} aria-invalid={!!priceError}/></span></label><button type="button" className="price-filter-clear" onClick={() => {setPriceMin('');setPriceMax('');}}>Limpar</button>{priceError && <div className="price-filter-error" role="status">{priceError}</div>}</div>}
@@ -254,8 +187,6 @@ function App() {
     </main>}
     {view === 'ofertas' && (query.trim() || category !== 'Todos' || store || irresistibleOnly || priceMin || priceMax) && <div className="filter-result" role="status">{query.trim() && searchResults === null && !priceError ? 'Buscando…' : `${groups.length.toLocaleString('pt-BR')} ${groups.length === 1 ? 'produto encontrado' : 'produtos encontrados'}`}</div>}
     {showTop && <button type="button" className={`scroll-top ${view === 'listas' && activeList ? 'in-list-footer' : ''}`} aria-label="Voltar ao topo" onClick={() => window.scrollTo({top:0, behavior:'instant'})}><Icon icon={IconArrowUp}/></button>}
-    {adminOpen && data.user?.admin && <AdminDialog data={data} refreshing={refreshing} onRefresh={refreshStore} onRefreshAll={refresh} busy={busy} percent={threshold} onClose={() => setAdminOpen(false)} onSettingsSaved={async () => { await load(); setToast('Configuração salva'); }} onAiSaved={() => setToast('Configuração de IA salva')} onCookiesSaved={() => setToast('Cookies salvos')} onReview={async (id,decision) => { await post('review-offer',{id,decision}); await load(); }} toast={toast}/>}
-    {!adminOpen && <Toast text={toast}/>}
     <Toast text={addedToast?.text} top/>
     {historyOffer && <HistoryDialog offer={historyOffer} store={data.stores[historyOffer.store]?.[0] || historyOffer.store} onClose={() => setHistoryOffer(null)}/>}
     {previewImage && <ImageLightbox image={previewImage} onClose={() => setPreviewImage(null)} />}

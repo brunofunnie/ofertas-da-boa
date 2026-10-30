@@ -3,11 +3,11 @@ test('preços extraídos por IA aguardam aprovação e rejeições não voltam n
  const db=new Database(':memory:');let price=900;const provider={id:'teste',name:'Teste',url:'https://example.com',fetchOffers:async()=>[{name:'Arroz 5kg',price,extracted:true,valid_until:'2099-12-31',url:'https://example.com/folheto'},{name:'Feijão 1kg',price:500}]};
  const server=createApp(db,[provider],{resolveUser:()=>({sub:'legacy-admin',email:'brunodeoliveira@gmail.com',name:'Admin',admin:true})});await new Promise(r=>server.listen(0,'127.0.0.1',r));const root=`http://127.0.0.1:${server.address().port}`;const post=async (p,d={})=>fetch(`${root}/api/${p}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(d)});
  try {
-  await post('refresh-store',{store:'teste'});assert.deepEqual(db.offers().map(x=>x.name),['Feijão 1kg']);let data=await (await fetch(root+'/api/data')).json();assert.equal(data.pending_offers.length,1);const id=data.pending_offers[0].id;
+  await post('refresh-store',{store:'teste'});assert.deepEqual(db.offers().map(x=>x.name),['Feijão 1kg']);let data=await (await fetch(root+'/api/admin/data')).json();assert.equal(data.pending_offers.length,1);const id=data.pending_offers[0].id;
   assert.equal((await post('review-offer',{id,decision:'approve'})).status,200);assert.equal(db.offers().find(o=>o.name==='Arroz 5kg').price,900);
-  await post('refresh-store',{store:'teste'});data=await (await fetch(root+'/api/data')).json();assert.equal(data.pending_offers.length,0);
-  price=1200;await post('refresh-store',{store:'teste'});assert.equal(db.offers().find(o=>o.name==='Arroz 5kg').price,900);data=await (await fetch(root+'/api/data')).json();assert.equal(data.pending_offers.length,1);
-  const reject=data.pending_offers[0].id;await post('review-offer',{id:reject,decision:'reject'});await post('refresh-store',{store:'teste'});data=await (await fetch(root+'/api/data')).json();assert.equal(data.pending_offers.length,0);assert.equal(db.offers().find(o=>o.name==='Arroz 5kg').price,900);
+  await post('refresh-store',{store:'teste'});data=await (await fetch(root+'/api/admin/data')).json();assert.equal(data.pending_offers.length,0);
+  price=1200;await post('refresh-store',{store:'teste'});assert.equal(db.offers().find(o=>o.name==='Arroz 5kg').price,900);data=await (await fetch(root+'/api/admin/data')).json();assert.equal(data.pending_offers.length,1);
+  const reject=data.pending_offers[0].id;await post('review-offer',{id:reject,decision:'reject'});await post('refresh-store',{store:'teste'});data=await (await fetch(root+'/api/admin/data')).json();assert.equal(data.pending_offers.length,0);assert.equal(db.offers().find(o=>o.name==='Arroz 5kg').price,900);
  }finally{await new Promise(r=>server.close(r));db.close();}
 });
 

@@ -41,6 +41,8 @@ export class Database {
       CREATE TABLE IF NOT EXISTS pending_offers(id INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL UNIQUE, store TEXT NOT NULL, offer_json TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, reviewed_at TEXT);
       CREATE TABLE IF NOT EXISTS offer_terms(offer_id INTEGER NOT NULL REFERENCES offers(id) ON DELETE CASCADE, term TEXT NOT NULL, PRIMARY KEY(offer_id,term));
       CREATE INDEX IF NOT EXISTS offer_terms_term ON offer_terms(term, offer_id);`);
+    const sessionColumns = new Set(this.db.prepare('PRAGMA table_info(auth_sessions)').all().map(c => c.name));
+    if (!sessionColumns.has('scope')) this.db.exec("ALTER TABLE auth_sessions ADD COLUMN scope TEXT NOT NULL DEFAULT 'app'");
     const userColumns = new Set(this.db.prepare('PRAGMA table_info(users)').all().map(c => c.name));
     if (!userColumns.has('picture')) this.db.exec('ALTER TABLE users ADD COLUMN picture TEXT');
     const sourceColumns = new Set(this.db.prepare('PRAGMA table_info(sources)').all().map(c => c.name));
@@ -194,7 +196,7 @@ export class Database {
   close() { this.db.close(); }
 }
 async function fetchPage(url) { const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 OfertasDaBoa/1.0' }, signal: AbortSignal.timeout(20000) }); if (!res.ok) throw Error(`HTTP ${res.status}`); return res.text(); }
-const auditPaths = new Set(['/api/refresh-store','/api/refresh','/api/offer','/api/list','/api/rename-list','/api/quantity','/api/item','/api/check','/api/remove','/api/delete-list','/api/review-offer','/api/ai-config','/api/ai-models','/api/instagram-cookies','/api/offer-settings','/api/logout']);
+const auditPaths = new Set(['/api/refresh-store','/api/refresh','/api/offer','/api/list','/api/rename-list','/api/quantity','/api/item','/api/check','/api/remove','/api/delete-list','/api/review-offer','/api/ai-config','/api/ai-models','/api/instagram-cookies','/api/offer-settings','/api/logout','/api/admin/logout']);
 const adminPaths = new Set(['/api/refresh-store','/api/refresh','/api/offer','/api/review-offer','/api/ai-config','/api/ai-models','/api/instagram-cookies','/api/offer-settings']);
 const listPaths = new Set(['/api/list','/api/rename-list','/api/quantity','/api/item','/api/check','/api/remove','/api/delete-list']);
 function logError(scope, error) {
@@ -252,16 +254,21 @@ export function createApp(db, storeProviders = providers, options = {}) {
     try {
       const requestUrl = new URL(req.url, 'http://localhost');
       const path = requestUrl.pathname;
-      const user = options.resolveUser ? options.resolveUser(req) : getSession(db.db,req);
+      const appUser = options.resolveUser ? options.resolveUser(req) : getSession(db.db,req);
+      const adminRequest = adminPaths.has(path) || path === '/api/admin/data' || path === '/api/admin/logout';
+      const adminUser = adminRequest ? (options.resolveUser ? options.resolveUser(req) : getSession(db.db,req,'admin')) : null;
+      const user = adminRequest ? adminUser : appUser;
       if (req.method === 'GET' && path === '/auth/google') return google.begin(req,res);
+      if (req.method === 'GET' && path === '/auth/google/admin') return google.begin(req,res,'admin');
       if (req.method === 'GET' && path === '/auth/google/callback') return await google.callback(req,res,db.db,requestUrl);
       if (req.method === 'POST' && auditPaths.has(path)) {
         const client = req.headers['cf-connecting-ip'];
-        res.once('finish', () => console.log(JSON.stringify({type:'audit',at:new Date().toISOString(),action:path.slice(5),status:res.statusCode,outcome:auditOutcome || (res.statusCode < 400 ? 'ok' : 'error'),actor:user?.sub || 'sem-autenticacao',client_ip:typeof client === 'string' && isIP(client) ? client : req.socket.remoteAddress || null,...auditDetails})));
+        res.once('finish', () => console.log(JSON.stringify({type:'audit',at:new Date().toISOString(),action:path.slice(5),status:res.statusCode,outcome:auditOutcome || (res.statusCode < 400 ? 'ok' : 'error'),actor:user?.sub || appUser?.sub || 'sem-autenticacao',client_ip:typeof client === 'string' && isIP(client) ? client : req.socket.remoteAddress || null,...auditDetails})));
       }
+      if (adminRequest && !adminUser?.admin) return json({error:'Acesso restrito.'}, appUser ? 403 : 401);
       if (req.method === 'GET' && path === '/api/ai-config') { if (!user?.admin) return json({error:'Acesso restrito.'},user ? 403 : 401); res.setHeader('Cache-Control','no-store'); return json(await publicConfig(options.aiConfigPath)); }
       if (req.method === 'GET' && path === '/api/search') return json(db.search(requestUrl.searchParams.get('q') || ''));
-      if (req.method === 'GET' && path === '/api/data') { res.setHeader('Cache-Control','no-store'); res.setHeader('Vary','Cookie'); const sources = db.db.prepare('SELECT * FROM sources').all().map(safeStoredStatus); for (const id of inFlight.keys()) { const existing = sources.find(s => s.store === id); if (existing) existing.state = 'running'; else sources.push({store:id,state:'running'}); } const sourceRows = db.db.prepare('SELECT * FROM store_source_status').all().map(row => row.state === 'error' ? {...row,status:sourceError(row.status)} : row); const store_sources = storeProviders.flatMap(p => (p.sourceDefinitions || []).map(def => ({store:p.id,source:def.id,name:def.name,...(sourceRows.find(row => row.store === p.id && row.source === def.id) || {state:'unknown'}),...(inFlightSources.get(p.id)?.has(def.id) ? {state:'running'} : {})}))); return json({ total_products:db.db.prepare('SELECT COUNT(*) AS count FROM products').get().count, irresistible_percent:db.db.prepare("SELECT value FROM app_settings WHERE key='irresistible_percent'").get()?.value ?? 20, offers: db.offers(), pending_offers:user?.admin ? db.pendingOffers() : [], lists:user ? db.lists(user.sub) : [], user:user ? {name:user.name,email:user.email,picture:user.picture,admin:!!user.admin} : null, login_available:google.available, sources, store_sources, stores: Object.fromEntries(storeProviders.map(p => [p.id,[p.name,p.url]])) }); }
+      if (req.method === 'GET' && (path === '/api/data' || path === '/api/admin/data')) { res.setHeader('Cache-Control','no-store'); res.setHeader('Vary','Cookie'); const sources = db.db.prepare('SELECT * FROM sources').all().map(safeStoredStatus); for (const id of inFlight.keys()) { const existing = sources.find(s => s.store === id); if (existing) existing.state = 'running'; else sources.push({store:id,state:'running'}); } const sourceRows = db.db.prepare('SELECT * FROM store_source_status').all().map(row => row.state === 'error' ? {...row,status:sourceError(row.status)} : row); const store_sources = storeProviders.flatMap(p => (p.sourceDefinitions || []).map(def => ({store:p.id,source:def.id,name:def.name,...(sourceRows.find(row => row.store === p.id && row.source === def.id) || {state:'unknown'}),...(inFlightSources.get(p.id)?.has(def.id) ? {state:'running'} : {})}))); return json({ total_products:db.db.prepare('SELECT COUNT(*) AS count FROM products').get().count, irresistible_percent:db.db.prepare("SELECT value FROM app_settings WHERE key='irresistible_percent'").get()?.value ?? 20, offers: db.offers(), pending_offers:adminRequest ? db.pendingOffers() : [], lists:user ? db.lists(user.sub) : [], user:user ? {name:user.name,email:user.email,picture:user.picture,admin:!!user.admin} : null, login_available:google.available, sources, store_sources, stores: Object.fromEntries(storeProviders.map(p => [p.id,[p.name,p.url]])) }); }
       if (req.method === 'POST' && path.startsWith('/api/')) {
         const origin = req.headers.origin, site = req.headers['sec-fetch-site'];
         if ((origin && (() => { try { const url = new URL(origin); return !['http:','https:'].includes(url.protocol) || url.host !== req.headers.host; } catch { return true; } })()) || site === 'cross-site' || site === 'same-site') return json({error:'Origem não permitida.'},403);
@@ -269,6 +276,7 @@ export function createApp(db, storeProviders = providers, options = {}) {
         if (adminPaths.has(path) && !user?.admin) return json({error:'Acesso restrito.'},user ? 403 : 401);
         if (listPaths.has(path) && !user) return json({error:'Entre com o Google para usar listas.'},401);
         if (path === '/api/logout') {destroySession(db.db,req);res.setHeader('Set-Cookie',google.clearCookie());return json({ok:true});}
+        if (path === '/api/admin/logout') {destroySession(db.db,req,'admin');res.setHeader('Set-Cookie',google.clearCookie('admin'));return json({ok:true});}
         let body = ''; for await (const chunk of req) { body += chunk; if (body.length > 100000) throw Error('Pedido muito grande'); }
         let data; try { data = JSON.parse(body || '{}'); } catch { throw Error('JSON inválido.'); }
         if (storeProviders.some(provider => provider.id === data.store)) auditDetails.store = data.store;
@@ -335,7 +343,8 @@ export function createApp(db, storeProviders = providers, options = {}) {
         return json({ error: 'Não encontrado' }, 404);
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') return json({ error: 'Não encontrado' }, 404);
-      const name = path === '/' ? 'index.html' : path.slice(1);
+      if (path === '/admin') { res.writeHead(308, {'Location':'/admin/'}); return res.end(); }
+      const name = path === '/' ? 'index.html' : path === '/admin/' ? 'admin/index.html' : path.slice(1);
       const root = resolve('dist'), file = resolve(root, name);
       if (!file.startsWith(root + '/')) return json({ error: 'Não encontrado' }, 404);
       try { const content = await readFile(file); res.writeHead(200, { 'Content-Type': ({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg'})[extname(file)] || 'application/octet-stream' }); res.end(content); } catch { json({ error: 'Arquivo não encontrado. Execute npm run build.' }, 404); }

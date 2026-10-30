@@ -1,9 +1,11 @@
 import { defineConfig } from 'vite';
+import { resolve } from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
 import { Database, createApp } from './server.js';
 import { loadDevGoogleAuth } from './scripts/infisical-run.js';
 
 export default defineConfig({
+  build: { rollupOptions: { input: { main: resolve('index.html'), admin: resolve('admin/index.html') } } },
   plugins: [tailwindcss(), {
     name: 'local-api',
     async configureServer(server) {
