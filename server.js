@@ -26,6 +26,16 @@ function distance(a, b) {
   }
   return previous[b.length];
 }
+const categoryNames = ['Carnes','Hortifruti','Mercearia','Limpeza','Higiene','Frios e laticínios','Padaria','Bebidas'];
+const todayInBrazil = () => new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+function validDate(value) { return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString().slice(0,10) === value; }
+function validImportedOffer(offer,today=todayInBrazil()) {
+  if (!offer || typeof offer.name !== 'string' || !offer.name.trim() || offer.name.trim().length > 200 || !Number.isSafeInteger(offer.price) || offer.price <= 0) return null;
+  if (offer.extracted && (!validDate(offer.valid_until) || offer.valid_until < today || offer.price > 10000000)) return null;
+  if (offer.valid_until && (!validDate(offer.valid_until) || offer.valid_until < today)) return null;
+  const club = Number.isSafeInteger(offer.club_price) && offer.club_price > 0 && offer.club_price < offer.price ? offer.club_price : null;
+  return {...offer,name:offer.name.trim(),club_price:club};
+}
 export class Database {
   constructor(path) {
     this.db = new DatabaseSync(path);
@@ -67,6 +77,8 @@ export class Database {
     if (!columns.has('club_price')) this.db.exec('ALTER TABLE offers ADD COLUMN club_price INTEGER');
     if (!columns.has('condition')) this.db.exec("ALTER TABLE offers ADD COLUMN condition TEXT NOT NULL DEFAULT ''");
     this.db.exec('CREATE TABLE IF NOT EXISTS products(id INTEGER PRIMARY KEY, product_key TEXT NOT NULL UNIQUE, name TEXT NOT NULL, category TEXT NOT NULL, image_url TEXT, image_source TEXT)');
+    if (!this.db.prepare('PRAGMA table_info(products)').all().some(column => column.name === 'customized')) this.db.exec('ALTER TABLE products ADD COLUMN customized INTEGER NOT NULL DEFAULT 0');
+    this.db.exec('CREATE TABLE IF NOT EXISTS product_aliases(alias TEXT PRIMARY KEY,product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE)');
     if (!columns.has('product_id')) this.db.exec('ALTER TABLE offers ADD COLUMN product_id INTEGER REFERENCES products(id)');
     const historyColumns = new Set(this.db.prepare('PRAGMA table_info(price_history)').all().map(c => c.name));
     if (!historyColumns.has('product_id')) this.db.exec('ALTER TABLE price_history ADD COLUMN product_id INTEGER REFERENCES products(id)');
@@ -90,6 +102,7 @@ export class Database {
         UPDATE products SET image_url=COALESCE((SELECT image_url FROM offers WHERE offers.product_id=products.id AND image_url IS NOT NULL AND image_url != '' ORDER BY updated DESC,id DESC LIMIT 1),(SELECT image_url FROM product_images WHERE product_images.product_key=products.product_key)), image_source=CASE WHEN EXISTS(SELECT 1 FROM offers WHERE offers.product_id=products.id AND image_url IS NOT NULL AND image_url != '') THEN NULL ELSE (SELECT source_url FROM product_images WHERE product_images.product_key=products.product_key) END WHERE image_url IS NULL`);
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    this.importPendingOffers();
   }
   saveOffers(store, offers, {transaction = true} = {}) {
     const q = this.db.prepare(`INSERT INTO offers(store,name,category,price,url,regular_price,condition,club_price,valid_until,extracted,image_url,price_unit) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(store,name) DO UPDATE SET previous_price=CASE WHEN offers.price != excluded.price THEN offers.price ELSE offers.previous_price END, price=excluded.price,category=excluded.category,url=excluded.url,regular_price=excluded.regular_price,condition=excluded.condition,club_price=excluded.club_price,valid_until=excluded.valid_until,extracted=excluded.extracted,image_url=COALESCE(NULLIF(excluded.image_url,''),offers.image_url),price_unit=excluded.price_unit,updated=CURRENT_TIMESTAMP`);
@@ -103,12 +116,13 @@ export class Database {
         else if (old.price !== o.price || old.category !== (o.category || categorize(o.name)) || old.url !== (o.url || '') || old.regular_price !== (o.regular_price || null) || old.condition !== (o.condition || '') || old.club_price !== (o.club_price || null) || old.valid_until !== (o.valid_until || null) || old.price_unit !== (o.price_unit === 'kg' ? 'kg' : 'un') || (o.image_url && old.image_url !== o.image_url)) stats.changed_count++;
         q.run(store, o.name, o.category || categorize(o.name), o.price, o.url || '', o.regular_price || null, o.condition || '', o.club_price || null, o.valid_until || null, o.extracted ? 1 : 0, o.image_url || null, o.price_unit === 'kg' ? 'kg' : 'un');
         const offer = this.db.prepare('SELECT * FROM offers WHERE store=? AND name=?').get(store, o.name);
-        const key = productKey(o.name) || `offer:${offer.id}`;
-        this.db.prepare('INSERT OR IGNORE INTO products(product_key,name,category) VALUES(?,?,?)').run(key, o.name, o.category || categorize(o.name));
-        const productId = this.db.prepare('SELECT id FROM products WHERE product_key=?').get(key).id;
+        const derivedKey=productKey(o.name) || `offer:${offer.id}`;
+        let target=this.db.prepare('SELECT id,product_key FROM products WHERE product_key=?').get(derivedKey) || this.db.prepare('SELECT products.id,products.product_key FROM product_aliases JOIN products ON products.id=product_aliases.product_id WHERE product_aliases.alias=?').get(derivedKey);
+        if (!target) {this.db.prepare('INSERT INTO products(product_key,name,category) VALUES(?,?,?)').run(derivedKey,o.name,o.category || categorize(o.name));target=this.db.prepare('SELECT id,product_key FROM products WHERE product_key=?').get(derivedKey);}
+        const key=target.product_key, productId=target.id;
         this.db.prepare('UPDATE offers SET product_key=?,product_id=? WHERE id=?').run(key, productId, offer.id);
         if (o.image_url) this.db.prepare('UPDATE products SET image_url=?,image_source=NULL WHERE id=?').run(o.image_url, productId);
-        this.indexOffer(offer);
+        this.indexOffer({...offer,product_id:productId});
         const previous = this.db.prepare('SELECT price FROM price_history WHERE product_key=? AND store=? AND condition=? ORDER BY id DESC LIMIT 1').get(key, store, o.condition || '');
         if (!previous || previous.price !== o.price) this.db.prepare('INSERT INTO price_history(product_key,product_id,store,condition,price) VALUES(?,?,?,?,?)').run(key, productId, store, o.condition || '', o.price);
       }
@@ -116,33 +130,90 @@ export class Database {
       return stats;
     } catch (e) { if (transaction) this.db.exec('ROLLBACK'); throw e; }
   }
-  queueOffers(store, offers) {
-    const insert = this.db.prepare('INSERT OR IGNORE INTO pending_offers(fingerprint,store,offer_json) VALUES(?,?,?)');
-    let added = 0;
-    for (const offer of offers) {
-      const normalized = {name:offer.name,price:offer.price,club_price:offer.club_price ?? null,valid_until:offer.valid_until ?? null,extracted:true,url:offer.url || ''};
-      const json = JSON.stringify(normalized), fingerprint = createHash('sha256').update(JSON.stringify([store,normalized])).digest('hex');
-      added += Number(insert.run(fingerprint,store,json).changes);
-    }
-    return added;
-  }
-  pendingOffers() {
-    return this.db.prepare("SELECT id,store,offer_json,created_at FROM pending_offers WHERE state='pending' ORDER BY id DESC").all().map(row => ({id:row.id,store:row.store,created_at:row.created_at,...JSON.parse(row.offer_json)}));
-  }
-  reviewOffer(id, decision) {
+  importPendingOffers() {
+    if (this.db.prepare("SELECT 1 FROM app_settings WHERE key='automatic_import_migrated'").get()) return;
+    const rows=this.db.prepare("SELECT * FROM pending_offers WHERE state='pending' ORDER BY created_at DESC,id DESC").all();
+    const seen=new Set(), today=todayInBrazil();
     this.db.exec('BEGIN');
     try {
-      const row = this.db.prepare("SELECT * FROM pending_offers WHERE id=? AND state='pending'").get(id);
-      if (!row) { this.db.exec('ROLLBACK'); return false; }
-      const offer = JSON.parse(row.offer_json);
-      const today = new Intl.DateTimeFormat('en-CA', {timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
-      if (decision === 'approve' && (!offer.valid_until || offer.valid_until < today)) { this.db.exec('ROLLBACK'); return false; }
-      if (decision === 'approve') this.saveOffers(row.store, [offer], {transaction:false});
-      this.db.prepare('UPDATE pending_offers SET state=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?').run(decision === 'approve' ? 'approved' : 'rejected',id);
+      for (const row of rows) {
+        let offer; try { offer=validImportedOffer(JSON.parse(row.offer_json),today); } catch { offer=null; }
+        let state='invalid';
+        if (offer) {
+          const key=JSON.stringify([row.store,offer.name]), existing=this.db.prepare('SELECT updated FROM offers WHERE store=? AND name=?').get(row.store,offer.name);
+          if (seen.has(key) || (existing?.updated && existing.updated >= row.created_at)) state='superseded';
+          else { this.saveOffers(row.store,[offer],{transaction:false});state='imported'; }
+          seen.add(key);
+        }
+        this.db.prepare("UPDATE pending_offers SET state=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=?").run(state,row.id);
+      }
+      this.db.prepare("INSERT INTO app_settings(key,value) VALUES('automatic_import_migrated',1)").run();
       this.db.exec('COMMIT');
-      return true;
-    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    } catch (error) { this.db.exec('ROLLBACK');throw error; }
   }
+  catalog(query = '') {
+    const products=this.db.prepare('SELECT id,product_key,name,category,image_url FROM products ORDER BY name COLLATE NOCASE,id').all();
+    const byId=new Map(products.map(product=>[product.id,{...product,offers:[],list_count:0,history_count:0}]));
+    for (const offer of this.db.prepare('SELECT * FROM offers ORDER BY updated DESC,id DESC').all()) byId.get(offer.product_id)?.offers.push(offer);
+    for (const row of this.db.prepare('SELECT offers.product_id,COUNT(*) count FROM items JOIN offers ON offers.id=items.offer_id GROUP BY offers.product_id').all()) {const product=byId.get(row.product_id);if(product)product.list_count=row.count;}
+    for (const row of this.db.prepare('SELECT product_id,COUNT(*) count FROM price_history GROUP BY product_id').all()) {const product=byId.get(row.product_id);if(product)product.history_count=row.count;}
+    const tokens=[...new Set(words(String(query).slice(0,100)))].slice(0,10);
+    return [...byId.values()].filter(product=>{
+      if (!tokens.length) return true;
+      const terms=[...new Set(words([product.name,product.category,...product.offers.map(offer=>offer.name)].join(' ')))];
+      return tokens.every(token=>terms.some(term=>term===token || term.startsWith(token) || (token.length>=4 && Math.abs(term.length-token.length)<=1 && distance(token,term)<=1)));
+    });
+  }
+  updateProduct(id,input) {
+    const product=this.db.prepare('SELECT * FROM products WHERE id=?').get(id);
+    if (!product) return false;
+    if (typeof input.name !== 'string' || !input.name.trim() || input.name.trim().length>200 || (!categoryNames.includes(input.category) && input.category !== product.category) || !Array.isArray(input.offers) || input.offers.length>200) throw Error('Dados inválidos.');
+    const ids=new Set();
+    for (const item of input.offers) {
+      if (!item || !Number.isSafeInteger(item.id) || ids.has(item.id) || !this.db.prepare('SELECT 1 FROM offers WHERE id=? AND product_id=?').get(item.id,id)) throw Error('Oferta inválida.');
+      ids.add(item.id);
+      const current=this.db.prepare('SELECT updated,price,club_price,regular_price,valid_until,condition,price_unit FROM offers WHERE id=? AND product_id=?').get(item.id,id);
+      if (!item.expected || ['updated','price','club_price','regular_price','valid_until','condition','price_unit'].some(key => item.expected[key] !== current[key])) {const error=Error('Oferta alterada.');error.code='OFFER_CHANGED';throw error;}
+      if (!Number.isSafeInteger(item.price) || item.price<=0 || item.price>10000000 || (item.club_price != null && (!Number.isSafeInteger(item.club_price) || item.club_price<=0 || item.club_price>=item.price)) || (item.regular_price != null && (!Number.isSafeInteger(item.regular_price) || item.regular_price<=item.price || item.regular_price>10000000)) || (item.valid_until != null && item.valid_until !== '' && !validDate(item.valid_until)) || typeof item.condition !== 'string' || item.condition.length>120 || !['un','kg'].includes(item.price_unit)) throw Error('Dados inválidos.');
+    }
+    this.db.exec('BEGIN');
+    try {
+      const alias=productKey(input.name.trim());
+      if (alias) {
+        const owner=this.db.prepare('SELECT id FROM products WHERE product_key=? UNION ALL SELECT product_id AS id FROM product_aliases WHERE alias=? LIMIT 1').get(alias,alias);
+        if (owner && owner.id!==id) {const error=Error('Produto equivalente já existe.');error.code='PRODUCT_CONFLICT';throw error;}
+      }
+      this.db.prepare('UPDATE products SET name=?,category=?,customized=1 WHERE id=?').run(input.name.trim(),input.category,id);
+      this.db.prepare('DELETE FROM product_aliases WHERE product_id=?').run(id);
+      if (alias && alias!==product.product_key) this.db.prepare('INSERT INTO product_aliases(alias,product_id) VALUES(?,?)').run(alias,id);
+      for (const item of input.offers) {
+        this.db.prepare('UPDATE offers SET previous_price=CASE WHEN price!=? THEN price ELSE previous_price END,price=?,club_price=?,regular_price=?,valid_until=?,condition=?,price_unit=?,updated=CURRENT_TIMESTAMP WHERE id=? AND product_id=?').run(item.price,item.price,item.club_price ?? null,item.regular_price ?? null,item.valid_until || null,item.condition.trim(),item.price_unit,item.id,id);
+        const latest=this.db.prepare('SELECT price FROM price_history WHERE product_id=? AND store=(SELECT store FROM offers WHERE id=?) AND condition=? ORDER BY id DESC LIMIT 1').get(id,item.id,item.condition.trim());
+        if (!latest || latest.price!==item.price) this.db.prepare('INSERT INTO price_history(product_key,product_id,store,condition,price) SELECT product_key,product_id,store,condition,price FROM offers WHERE id=?').run(item.id);
+      }
+      for (const offer of this.db.prepare('SELECT * FROM offers WHERE product_id=?').all(id)) this.indexOffer(offer);
+      this.db.exec('COMMIT');return true;
+    } catch (error) {this.db.exec('ROLLBACK');throw error;}
+  }
+  deleteProduct(id,expected=null) {
+    const product=this.db.prepare('SELECT product_key FROM products WHERE id=?').get(id);if(!product)return false;
+    this.db.exec('BEGIN');
+    try {
+      if (expected) {
+        const offers=this.db.prepare('SELECT id FROM offers WHERE product_id=? ORDER BY id').all(id).map(row=>row.id);
+        const listCount=this.db.prepare('SELECT COUNT(*) count FROM items WHERE offer_id IN (SELECT id FROM offers WHERE product_id=?)').get(id).count;
+        const historyCount=this.db.prepare('SELECT COUNT(*) count FROM price_history WHERE product_id=? OR product_key=?').get(id,product.product_key).count;
+        if (!Array.isArray(expected.offer_ids) || !Number.isSafeInteger(expected.list_count) || !Number.isSafeInteger(expected.history_count) || JSON.stringify(offers)!==JSON.stringify([...expected.offer_ids].sort((a,b)=>a-b)) || listCount!==expected.list_count || historyCount!==expected.history_count) {const error=Error('Produto alterado.');error.code='PRODUCT_CHANGED';throw error;}
+      }
+      this.db.prepare('DELETE FROM items WHERE offer_id IN (SELECT id FROM offers WHERE product_id=?)').run(id);
+      this.db.prepare('DELETE FROM price_history WHERE product_id=? OR product_key=?').run(id,product.product_key);
+      this.db.prepare('DELETE FROM offers WHERE product_id=?').run(id);
+      this.db.prepare('DELETE FROM product_images WHERE product_key=?').run(product.product_key);
+      this.db.prepare('DELETE FROM products WHERE id=?').run(id);
+      this.db.exec('COMMIT');return true;
+    } catch (error) {this.db.exec('ROLLBACK');throw error;}
+  }
+  customizedProducts() { return new Map(this.db.prepare('SELECT id,name,category FROM products WHERE customized=1').all().map(row=>[row.id,row])); }
   productImages() {
     const images = new Map();
     const usable = value => {
@@ -158,14 +229,15 @@ export class Database {
     return images;
   }
   offers() {
-    const images = this.productImages();
+    const images = this.productImages(), customized=this.customizedProducts();
     const history = this.db.prepare('SELECT price,observed_at FROM (SELECT id,price,observed_at FROM price_history WHERE product_key=? AND store=? AND condition=? ORDER BY id DESC LIMIT 20) ORDER BY id');
-    return this.db.prepare("SELECT * FROM offers WHERE valid_until IS NULL OR valid_until >= date('now', '-3 hours') ORDER BY updated DESC, name").all().map(o => ({ ...o, ...(images.get(o.product_key) || { image_url: null, image_source: null }), history: history.all(o.product_key, o.store, o.condition || '') }));
+    return this.db.prepare("SELECT * FROM offers WHERE valid_until IS NULL OR valid_until >= date('now', '-3 hours') ORDER BY updated DESC, name").all().map(o => ({ ...o, ...(customized.has(o.product_id) ? {name:customized.get(o.product_id).name,category:customized.get(o.product_id).category} : {}), ...(images.get(o.product_key) || { image_url: null, image_source: null }), history: history.all(o.product_key, o.store, o.condition || '') }));
   }
   indexOffer(offer) {
     this.db.prepare('DELETE FROM offer_terms WHERE offer_id=?').run(offer.id);
     const insert = this.db.prepare('INSERT OR IGNORE INTO offer_terms(offer_id,term) VALUES(?,?)');
-    for (const term of new Set(words(`${offer.name} ${offer.category}`))) insert.run(offer.id, term);
+    const product=offer.product_id ? this.db.prepare('SELECT name,category FROM products WHERE id=? AND customized=1').get(offer.product_id) : null;
+    for (const term of new Set(words(`${offer.name} ${offer.category} ${product?.name || ''} ${product?.category || ''}`))) insert.run(offer.id, term);
   }
   search(query) {
     const tokens = [...new Set(words(query.slice(0, 100)))].slice(0, 10);
@@ -186,7 +258,7 @@ export class Database {
   }
   createList(name, owner = 'legacy-admin') { return Number(this.db.prepare('INSERT INTO lists(name,owner_id) VALUES(?,?)').run(name, owner).lastInsertRowid); }
   addItem(list, offer, priceType = 'regular') { this.db.prepare('INSERT INTO items(list_id,offer_id,price_type) VALUES(?,?,?) ON CONFLICT(list_id,offer_id) DO UPDATE SET price_type=excluded.price_type').run(list, offer, priceType); }
-  lists(owner = 'legacy-admin') { const images = this.productImages(); return this.db.prepare('SELECT id,name FROM lists WHERE owner_id=? ORDER BY id DESC').all(owner).map(l => ({ ...l, items: this.db.prepare('SELECT offers.*,items.checked,items.quantity,items.price_type FROM items JOIN offers ON offers.id=items.offer_id WHERE list_id=? ORDER BY checked,name').all(l.id).map(item => ({ ...item, ...(item.price_type === 'club' ? {price:item.club_price || item.price,condition:item.club_price ? 'Clube' : 'Clube indisponível · preço normal'} : {}), ...(images.get(item.product_key) || { image_url: null, image_source: null }) })) })); }
+  lists(owner = 'legacy-admin') { const images = this.productImages(), customized=this.customizedProducts(); return this.db.prepare('SELECT id,name FROM lists WHERE owner_id=? ORDER BY id DESC').all(owner).map(l => ({ ...l, items: this.db.prepare('SELECT offers.*,items.checked,items.quantity,items.price_type FROM items JOIN offers ON offers.id=items.offer_id WHERE list_id=? ORDER BY checked,name').all(l.id).map(item => ({ ...item, ...(customized.has(item.product_id) ? {name:customized.get(item.product_id).name,category:customized.get(item.product_id).category} : {}), ...(item.price_type === 'club' ? {price:item.club_price || item.price,condition:item.club_price ? 'Clube' : 'Clube indisponível · preço normal'} : {}), ...(images.get(item.product_key) || { image_url: null, image_source: null }) })) })); }
   status(store, result) {
     this.db.prepare(`INSERT INTO sources(store,status,updated,state,last_success,total,new_count,changed_count) VALUES(?,?,CURRENT_TIMESTAMP,?,CASE WHEN ?='ok' THEN CURRENT_TIMESTAMP ELSE NULL END,?,?,?)
       ON CONFLICT(store) DO UPDATE SET status=excluded.status,updated=excluded.updated,state=excluded.state,last_success=COALESCE(excluded.last_success,sources.last_success),total=COALESCE(excluded.total,sources.total),new_count=COALESCE(excluded.new_count,sources.new_count),changed_count=COALESCE(excluded.changed_count,sources.changed_count)`)
@@ -196,8 +268,8 @@ export class Database {
   close() { this.db.close(); }
 }
 async function fetchPage(url) { const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 OfertasDaBoa/1.0' }, signal: AbortSignal.timeout(20000) }); if (!res.ok) throw Error(`HTTP ${res.status}`); return res.text(); }
-const auditPaths = new Set(['/api/refresh-store','/api/refresh','/api/offer','/api/list','/api/rename-list','/api/quantity','/api/item','/api/check','/api/remove','/api/delete-list','/api/review-offer','/api/ai-config','/api/ai-models','/api/instagram-cookies','/api/offer-settings','/api/logout','/api/admin/logout']);
-const adminPaths = new Set(['/api/refresh-store','/api/refresh','/api/offer','/api/review-offer','/api/ai-config','/api/ai-models','/api/instagram-cookies','/api/offer-settings']);
+const auditPaths = new Set(['/api/refresh-store','/api/refresh','/api/offer','/api/list','/api/rename-list','/api/quantity','/api/item','/api/check','/api/remove','/api/delete-list','/api/admin/product/update','/api/admin/product/delete','/api/ai-config','/api/ai-models','/api/instagram-cookies','/api/offer-settings','/api/logout','/api/admin/logout']);
+const adminPaths = new Set(['/api/refresh-store','/api/refresh','/api/offer','/api/admin/product/update','/api/admin/product/delete','/api/ai-config','/api/ai-models','/api/instagram-cookies','/api/offer-settings']);
 const listPaths = new Set(['/api/list','/api/rename-list','/api/quantity','/api/item','/api/check','/api/remove','/api/delete-list']);
 function logError(scope, error) {
   const detail = String(error?.stack || error?.message || error).slice(0,4000).replace(/(https?:\/\/[^\s?]+)\?[^\s]*/gi,'$1?[redacted]').replace(/\b(?:sk-|gh[pousr]_)[A-Za-z0-9_-]{12,}/g,'[redacted]').replace(/(Bearer\s+)[^\s]+/gi,'$1[redacted]');
@@ -229,16 +301,13 @@ export function createApp(db, storeProviders = providers, options = {}) {
         };
         const offers = provider.fetchWithStatus ? await provider.fetchWithStatus(fetchPage, report) : await provider.fetchOffers(fetchPage);
         if (!offers.length) throw Error('Nenhum produto encontrado.');
-        const extracted = offers.filter(offer => offer.extracted), regular = offers.filter(offer => !offer.extracted);
-        db.db.exec('BEGIN');
-        let stats, pending;
-        try { stats = db.saveOffers(provider.id, regular, {transaction:false}); pending = db.queueOffers(provider.id, extracted); db.db.exec('COMMIT'); }
-        catch (error) { db.db.exec('ROLLBACK'); throw error; }
-        stats.total += extracted.length;
+        const valid=offers.map(offer=>validImportedOffer(offer)).filter(Boolean);
+        if (!valid.length) throw Error('Nenhum produto válido encontrado.');
+        const stats=db.saveOffers(provider.id,valid);
         const warnings = offers.warnings || [];
         if (warnings.length) for (const warning of warnings) logError(`source:${provider.id}`,warning);
         const warningNames = [...new Set(warnings.map(w => /^Instagram:/i.test(w) ? 'Instagram' : /^Site:/i.test(w) ? 'Site' : 'fonte'))].join(', ');
-        return db.status(provider.id, {state:warnings.length ? 'error' : 'ok',status:warnings.length ? `Atualização parcial: ${warningNames} indisponível` : `${stats.total} produtos consultados${pending ? ` · ${pending} para revisão` : ''}`,...stats});
+        return db.status(provider.id, {state:warnings.length ? 'error' : 'ok',status:warnings.length ? `Atualização parcial: ${warningNames} indisponível` : `${stats.total} produtos consultados`,...stats});
       } catch (error) {
         logError(`refresh:${provider.id}`,error);
         return db.status(provider.id, {state:'error',status:`Não atualizado: ${sourceError(error.message)}`});
@@ -255,7 +324,7 @@ export function createApp(db, storeProviders = providers, options = {}) {
       const requestUrl = new URL(req.url, 'http://localhost');
       const path = requestUrl.pathname;
       const appUser = options.resolveUser ? options.resolveUser(req) : getSession(db.db,req);
-      const adminRequest = adminPaths.has(path) || path === '/api/admin/data' || path === '/api/admin/logout';
+      const adminRequest = adminPaths.has(path) || path === '/api/admin/products' || path === '/api/admin/data' || path === '/api/admin/logout';
       const adminUser = adminRequest ? (options.resolveUser ? options.resolveUser(req) : getSession(db.db,req,'admin')) : null;
       const user = adminRequest ? adminUser : appUser;
       if (req.method === 'GET' && path === '/auth/google') return google.begin(req,res);
@@ -267,8 +336,9 @@ export function createApp(db, storeProviders = providers, options = {}) {
       }
       if (adminRequest && !adminUser?.admin) return json({error:'Acesso restrito.'}, appUser ? 403 : 401);
       if (req.method === 'GET' && path === '/api/ai-config') { if (!user?.admin) return json({error:'Acesso restrito.'},user ? 403 : 401); res.setHeader('Cache-Control','no-store'); return json(await publicConfig(options.aiConfigPath)); }
+      if (req.method === 'GET' && path === '/api/admin/products') { res.setHeader('Cache-Control','no-store');return json({products:db.catalog(requestUrl.searchParams.get('q') || '')}); }
       if (req.method === 'GET' && path === '/api/search') return json(db.search(requestUrl.searchParams.get('q') || ''));
-      if (req.method === 'GET' && (path === '/api/data' || path === '/api/admin/data')) { res.setHeader('Cache-Control','no-store'); res.setHeader('Vary','Cookie'); const sources = db.db.prepare('SELECT * FROM sources').all().map(safeStoredStatus); for (const id of inFlight.keys()) { const existing = sources.find(s => s.store === id); if (existing) existing.state = 'running'; else sources.push({store:id,state:'running'}); } const sourceRows = db.db.prepare('SELECT * FROM store_source_status').all().map(row => row.state === 'error' ? {...row,status:sourceError(row.status)} : row); const store_sources = storeProviders.flatMap(p => (p.sourceDefinitions || []).map(def => ({store:p.id,source:def.id,name:def.name,...(sourceRows.find(row => row.store === p.id && row.source === def.id) || {state:'unknown'}),...(inFlightSources.get(p.id)?.has(def.id) ? {state:'running'} : {})}))); return json({ total_products:db.db.prepare('SELECT COUNT(*) AS count FROM products').get().count, irresistible_percent:db.db.prepare("SELECT value FROM app_settings WHERE key='irresistible_percent'").get()?.value ?? 20, offers: db.offers(), pending_offers:adminRequest ? db.pendingOffers() : [], lists:user ? db.lists(user.sub) : [], user:user ? {name:user.name,email:user.email,picture:user.picture,admin:!!user.admin} : null, login_available:google.available, sources, store_sources, stores: Object.fromEntries(storeProviders.map(p => [p.id,[p.name,p.url]])) }); }
+      if (req.method === 'GET' && (path === '/api/data' || path === '/api/admin/data')) { res.setHeader('Cache-Control','no-store'); res.setHeader('Vary','Cookie'); const sources = db.db.prepare('SELECT * FROM sources').all().map(safeStoredStatus); for (const id of inFlight.keys()) { const existing = sources.find(s => s.store === id); if (existing) existing.state = 'running'; else sources.push({store:id,state:'running'}); } const sourceRows = db.db.prepare('SELECT * FROM store_source_status').all().map(row => row.state === 'error' ? {...row,status:sourceError(row.status)} : row); const store_sources = storeProviders.flatMap(p => (p.sourceDefinitions || []).map(def => ({store:p.id,source:def.id,name:def.name,...(sourceRows.find(row => row.store === p.id && row.source === def.id) || {state:'unknown'}),...(inFlightSources.get(p.id)?.has(def.id) ? {state:'running'} : {})}))); return json({ total_products:db.db.prepare('SELECT COUNT(*) AS count FROM products').get().count, irresistible_percent:db.db.prepare("SELECT value FROM app_settings WHERE key='irresistible_percent'").get()?.value ?? 20, offers: db.offers(), lists:user ? db.lists(user.sub) : [], user:user ? {name:user.name,email:user.email,picture:user.picture,admin:!!user.admin} : null, login_available:google.available, sources, store_sources, stores: Object.fromEntries(storeProviders.map(p => [p.id,[p.name,p.url]])) }); }
       if (req.method === 'POST' && path.startsWith('/api/')) {
         const origin = req.headers.origin, site = req.headers['sec-fetch-site'];
         if ((origin && (() => { try { const url = new URL(origin); return !['http:','https:'].includes(url.protocol) || url.host !== req.headers.host; } catch { return true; } })()) || site === 'cross-site' || site === 'same-site') return json({error:'Origem não permitida.'},403);
@@ -281,7 +351,6 @@ export function createApp(db, storeProviders = providers, options = {}) {
         let data; try { data = JSON.parse(body || '{}'); } catch { throw Error('JSON inválido.'); }
         if (storeProviders.some(provider => provider.id === data.store)) auditDetails.store = data.store;
         for (const key of ['id','list_id','offer_id']) if (Number.isSafeInteger(data[key]) && data[key] > 0) auditDetails[key] = data[key];
-        if (path === '/api/review-offer' && ['approve','reject'].includes(data.decision)) auditDetails.decision = data.decision;
         if (path === '/api/ai-config' || path === '/api/ai-models') {
           res.setHeader('Cache-Control','no-store');
           if (path === '/api/ai-config') return json(await saveConfig(data, options.aiConfigPath));
@@ -314,9 +383,14 @@ export function createApp(db, storeProviders = providers, options = {}) {
           for (const provider of storeProviders) results[provider.id] = (await refreshOne(provider)).status;
           return json(results);
         }
-        if (path === '/api/review-offer') {
-          if (!Number.isSafeInteger(data.id) || data.id < 1 || !['approve','reject'].includes(data.decision)) return json({error:'Informe uma decisão válida.'},400);
-          if (!db.reviewOffer(data.id, data.decision)) return json({error:'Oferta indisponível ou vencida.'},409);
+        if (path === '/api/admin/product/update') {
+          if (!Number.isSafeInteger(data.id) || data.id<1) return json({error:'Produto inválido.'},400);
+          try {if (!db.updateProduct(data.id,data)) return json({error:'Produto não encontrado.'},404);} catch (error) {if (error.code === 'OFFER_CHANGED') return json({error:'A oferta foi atualizada. Reabra o produto e tente novamente.'},409);if (error.code === 'PRODUCT_CONFLICT') return json({error:'Já existe outro produto equivalente a esse nome.'},409);logError('admin:product-update',error);return json({error:'Verifique os dados do produto e dos preços.'},400);}
+          return json({ok:true});
+        }
+        if (path === '/api/admin/product/delete') {
+          if (!Number.isSafeInteger(data.id) || data.id<1 || !data.expected || typeof data.expected!=='object') return json({error:'Produto inválido.'},400);
+          try {if (!db.deleteProduct(data.id,data.expected)) return json({error:'Produto não encontrado.'},404);} catch(error) {if(error.code==='PRODUCT_CHANGED') return json({error:'O produto foi alterado. Feche e abra a exclusão novamente.'},409);throw error;}
           return json({ok:true});
         }
         if (path === '/api/offer') { const name = String(data.name || '').trim(), price = parsePrice(data.price); if (!name || !STORES[data.store] || !price) throw Error('Informe produto, supermercado e preço válido.'); db.saveOffers(data.store, [{ name, price, category: data.category, url: STORES[data.store][1] }]); return json({ ok: true }); }

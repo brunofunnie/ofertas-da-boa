@@ -5,7 +5,6 @@ import {createSession} from '../auth/index.js';
 
 test('sessões da loja e do backoffice são independentes e não dão acesso cruzado',async()=>{
  const db=new Database(':memory:'),admin={sub:'admin',name:'Admin',email:'brunodeoliveira@gmail.com'};
- db.queueOffers('a',[{name:'Arroz',price:100,valid_until:'2099-01-01'}]);
  const appToken=createSession(db.db,admin), adminToken=createSession(db.db,admin,'admin');
  const appCookie=`ofertas_session=${appToken}`;
  const adminCookie=`ofertas_admin_session=${adminToken}`;
@@ -15,9 +14,8 @@ test('sessões da loja e do backoffice são independentes e não dão acesso cru
   assert.equal((await fetch(root+'/api/admin/data',{headers:{cookie:appCookie}})).status,403);
   assert.equal((await fetch(root+'/api/admin/data',{headers:{cookie:`ofertas_admin_session=${appToken}`}})).status,401);
   assert.equal((await post('/api/list',{name:'Invasão'},`ofertas_session=${adminToken}`)).status,401);
-  assert.equal((await (await fetch(root+'/api/data',{headers:{cookie:appCookie}})).json()).pending_offers.length,0);
   assert.equal((await post('/api/offer-settings',{irresistible_percent:30},appCookie)).status,403);
-  const adminData=await fetch(root+'/api/admin/data',{headers:{cookie:adminCookie}});assert.equal(adminData.status,200);assert.equal((await adminData.json()).pending_offers.length,1);
+  const adminData=await fetch(root+'/api/admin/data',{headers:{cookie:adminCookie}});assert.equal(adminData.status,200);assert.ok(!('pending_offers' in await adminData.json()));
   assert.equal((await post('/api/offer-settings',{irresistible_percent:30},adminCookie)).status,200);
   assert.equal((await post('/api/list',{name:'Privada'},adminCookie)).status,401);
   assert.equal((await post('/api/admin/logout',{},adminCookie)).status,200);

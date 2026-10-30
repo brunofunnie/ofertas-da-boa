@@ -1,0 +1,17 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {Database,createApp} from '../server.js';
+
+test('ofertas extraídas válidas entram automaticamente e preços inválidos são descartados',async()=>{
+ const db=new Database(':memory:');let price=900;const provider={id:'teste',name:'Teste',url:'https://example.com',fetchOffers:async()=>[{name:'Arroz 5kg',price,extracted:true,valid_until:'2099-12-31'}, {name:'Inválido',price:0,extracted:true,valid_until:'2099-12-31'}, {name:'Vencido',price:100,extracted:true,valid_until:'2000-01-01'}, {name:'Sem validade',price:100,extracted:true}]};
+ const server=createApp(db,[provider],{resolveUser:()=>({sub:'admin',admin:true})});await new Promise(r=>server.listen(0,'127.0.0.1',r));const root=`http://127.0.0.1:${server.address().port}`;const refresh=()=>fetch(root+'/api/refresh-store',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({store:'teste'})});
+ try {const first=await (await refresh()).json();assert.equal(first.new_count,1);assert.deepEqual(db.offers().map(o=>o.name),['Arroz 5kg']);price=1200;const second=await (await refresh()).json();assert.equal(second.changed_count,1);assert.deepEqual(db.offers()[0].history.map(h=>h.price),[900,1200]);}finally{await new Promise(r=>server.close(r));db.close();}
+});
+test('migra ofertas pendentes válidas e preserva registros antigos rejeitados ou inválidos', async()=>{
+ const {DatabaseSync}=await import('node:sqlite');const {mkdtempSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');const dir=mkdtempSync(join(tmpdir(),'ofertas-pendentes-')),file=join(dir,'db.sqlite3'),legacy=new DatabaseSync(file);
+ legacy.exec("CREATE TABLE pending_offers(id INTEGER PRIMARY KEY,fingerprint TEXT NOT NULL UNIQUE,store TEXT NOT NULL,offer_json TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,reviewed_at TEXT)");const insert=legacy.prepare('INSERT INTO pending_offers(fingerprint,store,offer_json,state) VALUES(?,?,?,?)');for(const [key,name,price,date,state] of [['a','Arroz',1000,'2099-12-31','pending'],['b','Vencido',500,'2000-01-01','pending'],['c','Rejeitado',500,'2099-12-31','rejected'],['d','Zero',0,'2099-12-31','pending']])insert.run(key,'teste',JSON.stringify({name,price,valid_until:date,extracted:true}),state);legacy.close();
+ const db=new Database(file);try{assert.deepEqual(db.offers().map(o=>o.name),['Arroz']);assert.equal(db.db.prepare('SELECT count(*) n FROM pending_offers').get().n,4);assert.equal(db.db.prepare("SELECT state FROM pending_offers WHERE fingerprint='c'").get().state,'rejected');}finally{db.close();rmSync(dir,{recursive:true,force:true});}
+});
+test('pendência antiga não substitui preço já mais recente',()=>{
+ const db=new Database(':memory:');try{db.saveOffers('teste',[{name:'Arroz 5kg',price:1500}]);db.db.prepare("UPDATE offers SET updated='2098-01-01 00:00:00' WHERE name='Arroz 5kg'").run();db.db.prepare("DELETE FROM app_settings WHERE key='automatic_import_migrated'").run();db.db.prepare("INSERT INTO pending_offers(fingerprint,store,offer_json,state,created_at) VALUES(?,?,?,'pending','2020-01-01 00:00:00')").run('old','teste',JSON.stringify({name:'Arroz 5kg',price:500,valid_until:'2099-12-31',extracted:true}));db.importPendingOffers();assert.equal(db.offers()[0].price,1500);assert.equal(db.db.prepare("SELECT state FROM pending_offers WHERE fingerprint='old'").get().state,'superseded');}finally{db.close();}
+});

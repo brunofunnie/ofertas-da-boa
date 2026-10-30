@@ -8,7 +8,7 @@ test('ofertas públicas; listas pertencem ao usuário; ações administrativas s
  try{let r=await fetch(root+'/api/data');let j=await r.json();assert.equal(j.offers.length,1);assert.deepEqual(j.lists,[]);assert.equal((await post('list',{name:'Privada'})).status,401);
  const made=await (await post('list',{name:'Privada'},one)).json();assert.ok(made.id);j=await(await fetch(root+'/api/data',{headers:{cookie:two}})).json();assert.equal(j.lists.length,0);j=await(await fetch(root+'/api/data',{headers:{cookie:one}})).json();assert.equal(j.lists.length,1);
  for(const [path,body] of [['delete-list',{id:made.id}],['rename-list',{id:made.id,name:'Outro'}],['item',{list_id:made.id,offer_id:db.offers()[0].id}],['remove',{list_id:made.id,offer_id:1}],['check',{list_id:made.id,offer_id:1}],['quantity',{list_id:made.id,offer_id:1,quantity:2}]]) assert.equal((await post(path,body,two)).status,404);
- for(const path of ['ai-config','ai-models','refresh','refresh-store','instagram-cookies','offer','review-offer']) {assert.equal((await post(path,{},one)).status,403);assert.equal((await post(path,{})).status,401);}
+ for(const path of ['ai-config','ai-models','refresh','refresh-store','instagram-cookies','offer','admin/product/update','admin/product/delete']) {assert.equal((await post(path,{},one)).status,403);assert.equal((await post(path,{})).status,401);}
  assert.equal((await fetch(root+'/api/ai-config',{headers:{cookie:one}})).status,403);assert.equal((await post('list',{name:'Admin'},boss)).status,200);
  }finally{await new Promise(r=>server.close(r));db.close();}
 });
