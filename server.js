@@ -281,7 +281,7 @@ const adminPaths = new Set(['/api/refresh-store','/api/refresh','/api/offer','/a
 const listPaths = new Set(['/api/list','/api/rename-list','/api/quantity','/api/item','/api/check','/api/remove','/api/delete-list']);
 function logError(scope, error) {
   const detail = String(error?.stack || error?.message || error).slice(0,4000).replace(/(https?:\/\/[^\s?]+)\?[^\s]*/gi,'$1?[redacted]').replace(/\b(?:sk-|gh[pousr]_)[A-Za-z0-9_-]{12,}/g,'[redacted]').replace(/(Bearer\s+)[^\s]+/gi,'$1[redacted]');
-  console.error(JSON.stringify({type:'error',at:new Date().toISOString(),scope,detail}));
+  console.error(JSON.stringify({type:'error',at:new Date().toISOString(),scope,detail,...(error?.cause?.name && /^[A-Za-z]+$/.test(error.cause.name) ? {cause:error.cause.name} : {}),...(error?.cause?.cause?.code && /^[A-Z0-9_]+$/.test(error.cause.cause.code) ? {cause_code:error.cause.cause.code} : {})}));
 }
 function sourceError(message) {
   const safe = ['Limite de requisições do Gemini atingido. Tente novamente mais tarde.','Limite de requisições do provedor de IA atingido. Tente novamente mais tarde.','Sessão do Instagram expirada ou requer verificação.','Instagram demorou para abrir a publicação. Tente atualizar novamente.'];

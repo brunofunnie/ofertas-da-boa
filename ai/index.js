@@ -63,7 +63,9 @@ export async function readImage(config, prompt, bytes, mimeType, fetcher = fetch
   const headers={'content-type':'application/json',...(gemini?{'x-goog-api-key':config.api_key}:config.api_key?{Authorization:`Bearer ${config.api_key}`}:{})};
   const url=gemini ? `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.model)}:generateContent` : `${baseUrl(config.base_url)}/chat/completions`;
   const body=gemini ? {contents:[{parts:[{text:prompt},{inlineData:{mimeType,data:bytes.toString('base64')}}]}],generationConfig:{responseMimeType:'application/json',temperature:0}} : {model:config.model,messages:[{role:'user',content:[{type:'text',text:prompt},{type:'image_url',image_url:{url:`data:${mimeType};base64,${bytes.toString('base64')}`}}]}]};
-  let response;try {response=await fetcher(url,{method:'POST',headers,body:JSON.stringify(body),signal:AbortSignal.timeout(90000),redirect:'error',dispatcher:outboundAgent});}catch {throw Error('Não foi possível conectar ao provedor de IA.');}
+  // Este modelo no CommandCode aceita 'off' e pode exceder o prazo ao raciocinar sobre folhetos.
+  if (!gemini && new URL(url).hostname==='api.commandcode.ai' && config.model==='deepseek/deepseek-v4.1-flash') body.reasoning_effort='off';
+  let response;try {response=await fetcher(url,{method:'POST',headers,body:JSON.stringify(body),signal:AbortSignal.timeout(90000),redirect:'error',dispatcher:outboundAgent});}catch (error) {throw new Error('Não foi possível conectar ao provedor de IA.',{cause:error});}
   if(response.status===429)throw Error(`Limite de requisições do ${gemini?'Gemini':'provedor de IA'} atingido. Tente novamente mais tarde.`);
   if(!response.ok)throw Error(`Leitura do folheto indisponível (HTTP ${response.status}).`);
   let result;try {result=await response.json();} catch {throw Error('Resposta inválida do provedor de IA.');}const text=gemini?result.candidates?.[0]?.content?.parts?.map(p=>p.text || '').join(''):result.choices?.[0]?.message?.content;

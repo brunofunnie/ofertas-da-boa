@@ -63,3 +63,17 @@ test('consulta DNS bloqueia destinos privados e misturados antes de conectar', a
 test('somente provedores autorizados no servidor podem ser consultados', async () => {
  await assert.rejects(listModels({provider:'openai',base_url:'https://host-nao-autorizado.example/v1',api_key:''}),/não autorizado/i);
 });
+
+test('desativa raciocínio somente para DeepSeek V4.1 Flash do CommandCode ao ler folhetos',async()=>{
+ const captured=[];const fetcher=async(_url,options)=>{captured.push(JSON.parse(options.body));return new Response(JSON.stringify({choices:[{message:{content:'{}'}}]}));};
+ const config={provider:'openai',base_url:'https://api.commandcode.ai/provider/v1',model:'deepseek/deepseek-v4.1-flash',api_key:'test'};
+ await readImage(config,'Leia',Buffer.from('x'),'image/jpeg',fetcher);
+ await readImage({...config,model:'outro'},'Leia',Buffer.from('x'),'image/jpeg',fetcher);
+ await readImage({...config,base_url:'https://example.org/v1'},'Leia',Buffer.from('x'),'image/jpeg',fetcher);
+ assert.equal(captured[0].reasoning_effort,'off');assert.equal(captured[1].reasoning_effort,undefined);assert.equal(captured[2].reasoning_effort,undefined);
+});
+
+test('preserva a causa da falha de conexão para os logs do servidor',async()=>{
+ const cause=new Error('falha interna');cause.name='TimeoutError';
+ await assert.rejects(readImage({provider:'openai',base_url:'https://example.org/v1',model:'vision'},'Leia',Buffer.from('x'),'image/jpeg',async()=>{throw cause;}),error=>error.message==='Não foi possível conectar ao provedor de IA.' && error.cause===cause);
+});
