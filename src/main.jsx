@@ -34,7 +34,7 @@ function AccountMenu({ user, onLogout }) {
   const menu = useRef(null);
   return <details ref={menu} className="account-menu" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }} onKeyDown={event => { if (event.key === 'Escape') { menu.current.open = false; menu.current.querySelector('summary')?.focus(); } }}>
     <summary className="account-avatar" aria-label="Menu da conta" title={user.name}><span aria-hidden="true">{(user.name || user.email || '?').trim().charAt(0).toLocaleUpperCase()}</span>{user.picture && <img src={user.picture} alt="" referrerPolicy="no-referrer" onError={event => { event.currentTarget.hidden = true; }}/>}</summary>
-    <div className="account-popover"><button type="button" onClick={() => { menu.current.open = false; onLogout(); }}>Sair</button></div>
+    <div className="account-popover"><div className="account-email">{user.email}</div><button type="button" onClick={() => { menu.current.open = false; onLogout(); }}>Sair</button></div>
   </details>;
 }
 function Icon({ icon: Component, size = 18, className }) { return <Component aria-hidden="true" className={className} size={size} stroke={1.8}/>; }

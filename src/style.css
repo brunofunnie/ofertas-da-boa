@@ -49,3 +49,5 @@
 .primary svg{display:inline-block;vertical-align:-.125em}
 .store-toast-top{top:calc(12px + env(safe-area-inset-top));bottom:auto;pointer-events:none;text-align:center}
 .store-toast-top{overflow-wrap:anywhere}
+
+.account-email{max-width:min(280px,calc(100vw - 48px));padding:10px 12px;border-bottom:1px solid #f1dfd0;color:#805b47;font-size:12px;overflow-wrap:anywhere;user-select:text}
