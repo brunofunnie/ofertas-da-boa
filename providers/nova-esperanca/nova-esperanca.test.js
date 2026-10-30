@@ -20,3 +20,9 @@ test('busca as imagens e interpreta cada folheto sem aceitar conteúdos que não
  const offers=await importFlyers(html,'2026-10-30',{fetcher:image,read:ai});assert.equal(offers[0].price,1990);assert.equal(offers[0].url,`${base}/wp-content/uploads/folheto.jpg`);
  await assert.rejects(importFlyers(html,'2026-10-30',{fetcher:async()=>new Response('x',{headers:{'content-type':'text/html'}}),read:ai}));
 });
+test('preserva ofertas lidas quando outro folheto falha e sinaliza atualização parcial',async()=>{
+ const html=`<main><div class="elementor-widget-image-gallery"><figure class="gallery-item"><a href="/wp-content/uploads/1.jpg"></a></figure><figure class="gallery-item"><a href="/wp-content/uploads/2.jpg"></a></figure></div></main>`;
+ const fetcher=async url=>String(url).endsWith('/2.jpg') ? new Response('',{status:503}) : new Response('image',{headers:{'content-type':'image/jpeg'}});
+ const read=async()=>JSON.stringify({valid_from:'2026-10-30',valid_until:'2026-10-31',products:[{name:'Leite 1L',price:5}]});
+ const offers=await importFlyers(html,'2026-10-30',{fetcher,read});assert.equal(offers.length,1);assert.equal(offers.warnings.length,1);
+});
