@@ -51,3 +51,5 @@
 .store-toast-top{overflow-wrap:anywhere}
 
 .account-email{max-width:100%;padding:10px 12px;border-bottom:1px solid #f1dfd0;color:#805b47;font-size:12px;white-space:nowrap;overflow-x:auto;user-select:text}
+
+.history-chart-scroll{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}.history-chart-scroll:focus-visible{outline:2px solid #b93422;outline-offset:2px;border-radius:4px}.history-chart-scroll svg{max-width:none}
