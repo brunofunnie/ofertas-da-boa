@@ -83,6 +83,7 @@ export class Database {
     if (!productColumns.has('image_manual')) this.db.exec('ALTER TABLE products ADD COLUMN image_manual INTEGER NOT NULL DEFAULT 0');
     if (!this.db.prepare('PRAGMA table_info(products)').all().some(column => column.name === 'customized')) this.db.exec('ALTER TABLE products ADD COLUMN customized INTEGER NOT NULL DEFAULT 0');
     this.db.exec('CREATE TABLE IF NOT EXISTS product_aliases(alias TEXT PRIMARY KEY,product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE)');
+    this.db.exec('CREATE TABLE IF NOT EXISTS image_deletion_queue(image_key TEXT PRIMARY KEY)');
     if (!columns.has('product_id')) this.db.exec('ALTER TABLE offers ADD COLUMN product_id INTEGER REFERENCES products(id)');
     const historyColumns = new Set(this.db.prepare('PRAGMA table_info(price_history)').all().map(c => c.name));
     if (!historyColumns.has('product_id')) this.db.exec('ALTER TABLE price_history ADD COLUMN product_id INTEGER REFERENCES products(id)');
@@ -200,7 +201,7 @@ export class Database {
     } catch (error) {this.db.exec('ROLLBACK');throw error;}
   }
   deleteProduct(id,expected=null) {
-    const product=this.db.prepare('SELECT product_key FROM products WHERE id=?').get(id);if(!product)return false;
+    const product=this.db.prepare('SELECT product_key,image_r2_key FROM products WHERE id=?').get(id);if(!product)return false;
     this.db.exec('BEGIN');
     try {
       if (expected) {
@@ -214,6 +215,7 @@ export class Database {
       this.db.prepare('DELETE FROM offers WHERE product_id=?').run(id);
       this.db.prepare('DELETE FROM product_images WHERE product_key=?').run(product.product_key);
       this.db.prepare('DELETE FROM products WHERE id=?').run(id);
+      if (product.image_r2_key) this.db.prepare('INSERT OR IGNORE INTO image_deletion_queue(image_key) VALUES(?)').run(product.image_r2_key);
       this.db.exec('COMMIT');return true;
     } catch (error) {this.db.exec('ROLLBACK');throw error;}
   }
@@ -292,7 +294,20 @@ function safeStoredStatus(source) {
 
 export function createApp(db, storeProviders = providers, options = {}) {
   const imageStore = options.imageStore ?? createImageStore(process.env.R2_IMAGES_CREDENTIALS);
-  let imageSyncRunning = false, imageSyncAgain = false;
+  let imageSyncRunning = false, imageSyncAgain = false, imageLock=Promise.resolve();
+  const withImageLock = fn => {const work=imageLock.then(fn);imageLock=work.catch(()=>{});return work;};
+  const queueImageDeletion = key => {if (key) db.db.prepare('INSERT OR IGNORE INTO image_deletion_queue(image_key) VALUES(?)').run(key);};
+  const deleteQueuedImages = () => {
+    if (!imageStore) return Promise.resolve();
+    return withImageLock(async()=>{
+      for (const {image_key:key} of db.db.prepare('SELECT image_key FROM image_deletion_queue').all()) {
+        try {
+          if (!db.db.prepare('SELECT 1 FROM products WHERE image_r2_key=? LIMIT 1').get(key)) await imageStore.delete(key);
+          db.db.prepare('DELETE FROM image_deletion_queue WHERE image_key=?').run(key);
+        } catch (error) {logError('image-delete',error);}
+      }
+    });
+  };
   const syncImages = async () => {
     if (!imageStore) return;
     if (imageSyncRunning) { imageSyncAgain=true; return; }
@@ -304,14 +319,16 @@ export function createApp(db, storeProviders = providers, options = {}) {
       await Promise.all(Array.from({length:4},async()=>{
         while (index<products.length) {
           const product=products[index++];
-          try { const {bytes}=await downloadImage(product.image_url); const key=await imageStore.put(bytes); saved += Number(db.db.prepare('UPDATE products SET image_r2_key=? WHERE id=? AND image_url=? AND image_r2_key IS NULL AND image_manual=0').run(key,product.id,product.image_url).changes); }
+          try { const {bytes}=await downloadImage(product.image_url); await withImageLock(async()=>{const key=await imageStore.put(bytes); const changed=Number(db.db.prepare('UPDATE products SET image_r2_key=? WHERE id=? AND image_url=? AND image_r2_key IS NULL AND image_manual=0').run(key,product.id,product.image_url).changes); saved+=changed; if (!changed) queueImageDeletion(key);}); }
           catch { failed++; }
         }
       }));
       console.log(JSON.stringify({type:'image-sync',saved,failed}));
+      void deleteQueuedImages();
     } catch (error) { logError('image-sync',error); } finally { imageSyncRunning=false; if (imageSyncAgain) {imageSyncAgain=false; void syncImages();} }
   };
-  if (imageStore) { const timer=setTimeout(syncImages,1000); timer.unref(); }
+  let imageTimer, imageStartupTimer;
+  if (imageStore) { imageStartupTimer=setTimeout(()=>{void deleteQueuedImages();void syncImages();},1000); imageStartupTimer.unref(); imageTimer=setInterval(()=>{void deleteQueuedImages();},60000); imageTimer.unref(); }
   const inFlight = new Map();
   const inFlightSources = new Map();
   const google = createGoogleAuth(options.googleAuth);
@@ -419,7 +436,11 @@ export function createApp(db, storeProviders = providers, options = {}) {
           if (!imageStore) return json({error:'Armazenamento de imagens não configurado.'},503);
           if (!Number.isSafeInteger(data.id) || data.id<1 || typeof data.image!=='string' || data.image.length>7000000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(data.image)) return json({error:'Imagem inválida.'},400);
           if (!db.db.prepare('SELECT 1 FROM products WHERE id=?').get(data.id)) return json({error:'Produto não encontrado.'},404);
-          try { const key=await imageStore.put(Buffer.from(data.image,'base64')); db.db.prepare('UPDATE products SET image_r2_key=?,image_manual=1,image_source=NULL WHERE id=?').run(key,data.id); return json({ok:true}); }
+          try {
+            const changed=await withImageLock(async()=>{const original=db.db.prepare('SELECT product_key,image_r2_key FROM products WHERE id=?').get(data.id); if (!original) return 0; const key=await imageStore.put(Buffer.from(data.image,'base64')); const result=db.db.prepare('UPDATE products SET image_r2_key=?,image_manual=1,image_source=NULL WHERE id=? AND product_key=?').run(key,data.id,original.product_key); if (!result.changes) queueImageDeletion(key); else if (original.image_r2_key && original.image_r2_key!==key) queueImageDeletion(original.image_r2_key); return result.changes;});
+            void deleteQueuedImages();
+            return changed ? json({ok:true}) : json({error:'Produto não encontrado.'},404);
+          }
           catch(error) {logError('image-upload',error);return json({error:'Não foi possível salvar a imagem. Use JPEG, PNG ou WebP de até 5 MB.'},400);}
         }
         if (path === '/api/admin/product/update') {
@@ -430,6 +451,7 @@ export function createApp(db, storeProviders = providers, options = {}) {
         if (path === '/api/admin/product/delete') {
           if (!Number.isSafeInteger(data.id) || data.id<1 || !data.expected || typeof data.expected!=='object') return json({error:'Produto inválido.'},400);
           try {if (!db.deleteProduct(data.id,data.expected)) return json({error:'Produto não encontrado.'},404);} catch(error) {if(error.code==='PRODUCT_CHANGED') return json({error:'O produto foi alterado. Feche e abra a exclusão novamente.'},409);throw error;}
+          await deleteQueuedImages();
           return json({ok:true});
         }
         if (path === '/api/offer') { const name = String(data.name || '').trim(), price = parsePrice(data.price); if (!name || !STORES[data.store] || !price) throw Error('Informe produto, supermercado e preço válido.'); db.saveOffers(data.store, [{ name, price, category: data.category, url: STORES[data.store][1] }]); return json({ ok: true }); }
@@ -463,6 +485,7 @@ export function createApp(db, storeProviders = providers, options = {}) {
       try { const content = await readFile(file); res.writeHead(200, { 'Content-Type': ({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg'})[extname(file)] || 'application/octet-stream' }); res.end(content); } catch { json({ error: 'Arquivo não encontrado. Execute npm run build.' }, 404); }
     } catch (e) { logError('request',e); json({ error:'Não foi possível concluir a solicitação. Verifique os dados e tente novamente.' }, 400); }
   });
+  server.once('close',()=>{clearInterval(imageTimer);clearTimeout(imageStartupTimer);});
   return server;
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

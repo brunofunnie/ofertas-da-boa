@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {S3Client, PutObjectCommand, GetObjectCommand} from '@aws-sdk/client-s3';
+import {S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand} from '@aws-sdk/client-s3';
 import {outboundAgent} from './ai/network.js';
 
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -31,6 +31,10 @@ export function createImageStore(credentials, client) {
       const type=imageType(bytes), key=createHash('sha256').update(bytes).digest('hex');
       await client.send(new PutObjectCommand({Bucket:'ofertas-da-boa-images',Key:key,Body:bytes,ContentType:type}),{abortSignal:AbortSignal.timeout(30000)});
       return key;
+    },
+    async delete(key) {
+      if (!/^[a-f0-9]{64}$/.test(key)) throw Error('Chave inválida.');
+      await client.send(new DeleteObjectCommand({Bucket:'ofertas-da-boa-images',Key:key}),{abortSignal:AbortSignal.timeout(30000)});
     },
     async get(key) {
       if (!/^[a-f0-9]{64}$/.test(key)) throw Error('Chave inválida.');
