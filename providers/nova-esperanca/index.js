@@ -1,6 +1,8 @@
 import * as cheerio from 'cheerio';
 import {activeConfig, readImage} from '../../ai/index.js';
 import {outboundAgent} from '../../ai/network.js';
+import {parseFlyer} from '../flyer.js';
+export {parseFlyer} from '../flyer.js';
 
 export const id='nova-esperanca';
 export const name='Nova Esperança';
@@ -16,16 +18,6 @@ export function findFlyers(html) {
     } catch { /* Ignore invalid links. */ }
   });
   return [...images];
-}
-const validDate=value=>typeof value==='string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(value)) && new Date(value).toISOString().slice(0,10)===value;
-const cents=value=>typeof value==='number' && Number.isFinite(value) && value>0 && value<=100000 ? Math.round(value*100) : null;
-export function parseFlyer(data, imageUrl, today) {
-  if (!validDate(data?.valid_from) || !validDate(data?.valid_until) || data.valid_from>today || data.valid_until<today || data.valid_from>data.valid_until || !Array.isArray(data.products)) return [];
-  return data.products.flatMap(product=>{
-    const price=cents(product?.price), club=cents(product?.club_price), productName=typeof product?.name==='string' ? product.name.trim() : '';
-    if (!productName || productName.length>200 || !price || (club && club>=price)) return [];
-    return [{name:productName,price,club_price:club,price_unit:product.price_unit==='kg' ? 'kg' : 'un',valid_until:data.valid_until,extracted:true,url:imageUrl}];
-  });
 }
 export async function importFlyers(html,today,{fetcher=fetch,read}={}) {
   const images=findFlyers(html);

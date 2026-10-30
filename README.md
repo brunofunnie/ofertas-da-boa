@@ -42,6 +42,8 @@ A aplicação não remove automaticamente ofertas antigas nem confirma validade 
 
 A busca usa um índice de relações entre produtos e palavras no SQLite. Ignora acentos, aceita palavras em qualquer ordem, prefixos e um erro de digitação em palavras de pelo menos quatro letras. Os filtros de setor e mercado continuam disponíveis junto com a busca.
 
+O Rede Correia disponibiliza as ofertas em PDF; cada página é convertida em imagem e lida pela IA, respeitando sua própria validade. Para executá-lo fora do Docker, instale `poppler-utils` (`pdfinfo` e `pdftoppm`). O PDF é limitado a 50 MB e 12 páginas.
+
 O Nova Esperança usa a galeria de folhetos da página de ofertas. Cada imagem é lida pelo provedor de IA configurado e apenas ofertas com validade vigente são importadas; preços por quilo são identificados quando indicados no folheto. A leitura por IA pode errar e a consulta de várias imagens pode gerar custos.
 
 As imagens fornecidas pelos supermercados são compartilhadas entre as ofertas do mesmo produto. Em produção, imagens disponíveis são copiadas para um bucket privado do Cloudflare R2 em segundo plano; se o download falhar, a URL original continua sendo usada e será tentada novamente na próxima atualização. Em Administração → Produtos, é possível enviar uma imagem JPEG, PNG ou WebP de até 5 MB; essa escolha é mantida nas próximas coletas. Ao excluir um produto ou substituir sua imagem, o arquivo anterior é removido do R2 quando nenhum outro produto o utiliza; em caso de falha, a exclusão é repetida. As credenciais do R2 são carregadas do Infisical.
