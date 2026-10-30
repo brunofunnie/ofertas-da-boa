@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { isIP } from 'node:net';
 import { productKey } from './matcher.js';
 import {createImageStore, downloadImage} from './image-store.js';
+import {startRefreshScheduler} from './scheduler.js';
 import { providers } from './providers/index.js';
 import { cookiesPath, normalizeCookies } from './providers/instagram/index.js';
 import {publicConfig, saveConfig, modelConfig, listModels} from './ai/index.js';
@@ -485,9 +486,11 @@ export function createApp(db, storeProviders = providers, options = {}) {
       try { const content = await readFile(file); res.writeHead(200, { 'Content-Type': ({'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg'})[extname(file)] || 'application/octet-stream' }); res.end(content); } catch { json({ error: 'Arquivo não encontrado. Execute npm run build.' }, 404); }
     } catch (e) { logError('request',e); json({ error:'Não foi possível concluir a solicitação. Verifique os dados e tente novamente.' }, 400); }
   });
-  server.once('close',()=>{clearInterval(imageTimer);clearTimeout(imageStartupTimer);});
+  let stopScheduler;
+  if (options.schedule) server.once('listening',()=>{stopScheduler=startRefreshScheduler(storeProviders,refreshOne);});
+  server.once('close',()=>{clearInterval(imageTimer);clearTimeout(imageStartupTimer);stopScheduler?.();});
   return server;
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const port = Number(process.env.PORT || 8000); createApp(new Database(process.env.DATABASE_PATH || 'ofertas.sqlite3')).listen(port, '0.0.0.0', () => console.log(`http://localhost:${port}`));
+  const port = Number(process.env.PORT || 8000); createApp(new Database(process.env.DATABASE_PATH || 'ofertas.sqlite3'),providers,{schedule:true}).listen(port, '0.0.0.0', () => console.log(`http://localhost:${port}`));
 }
