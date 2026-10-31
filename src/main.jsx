@@ -6,6 +6,7 @@ import { groupListItems } from './list-groups.js';
 import { formatShoppingList } from './share-list.js';
 import { priceTrend, chartPoints } from './price-history.js';
 import { isIrresistible } from './irresistible.js';
+import { sortOfferGroups } from './offer-sort.js';
 import { groupEqualPrices } from './offer-prices.js';
 import { parsePriceBound, matchesPriceRange } from './price-filter.js';
 import { latestSuccessfulUpdate } from './last-update.js';
@@ -89,6 +90,7 @@ function GridProduct({group, stores, onPreview, onAdd, onHistory}) {
 function App() {
   const [data, setData] = useState({ offers: [], lists: [], sources: [], stores: {}, user:null, total_products:null });
   useEffect(() => { const splash = document.getElementById('splash'); const timer = setTimeout(() => splash?.remove(), 2200); return () => clearTimeout(timer); }, []);
+  const [sortOrder, setSortOrder] = useState('');
   const [irresistibleOnly, setIrresistibleOnly] = useState(false), [priceDropOnly, setPriceDropOnly] = useState(false);
   const [view, setView] = useState('ofertas'), [category, setCategory] = useState('Todos'), [query, setQuery] = useState(''), [store, setStore] = useState('');
   const [searchResults, setSearchResults] = useState(null);
@@ -96,7 +98,7 @@ function App() {
   const [priceMin, setPriceMin] = useState(''), [priceMax, setPriceMax] = useState('');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const moreOffers = useRef(null);
-  useEffect(() => { setVisibleCount(PAGE_SIZE); }, [category, store, query, irresistibleOnly, priceDropOnly, priceMin, priceMax]);
+  useEffect(() => { setVisibleCount(PAGE_SIZE); }, [category, store, query, irresistibleOnly, priceDropOnly, priceMin, priceMax, sortOrder]);
   const [gridView, setGridView] = useState(() => { try {return localStorage.getItem('offers-view') === 'grid';} catch {return false;} });
   function toggleGrid() {setGridView(current => {const next=!current;try {localStorage.setItem('offers-view',next?'grid':'list');} catch {}return next;});}
   const [showTop, setShowTop] = useState(false);
@@ -139,12 +141,12 @@ function App() {
   const minPrice = parsePriceBound(priceMin), maxPrice = parsePriceBound(priceMax);
   const priceError = minPrice === undefined || maxPrice === undefined ? 'Use valores válidos, com até dois decimais.' : minPrice !== null && maxPrice !== null && minPrice > maxPrice ? 'O mínimo deve ser menor ou igual ao máximo.' : '';
   const offers = data.offers.filter(o => !priceError && matchesPriceRange(o, minPrice, maxPrice) && (!irresistibleOnly || isIrresistible(o, threshold)) && (!priceDropOnly || priceTrend(o.history)<0) && (category === 'Todos' || o.category === category) && (!store || o.store === store) && (!matchingKeys || matchingKeys.has(o.product_key || `offer:${o.id}`)));
-  const groups = [...offers.reduce((map, offer) => {
+  const groups = sortOfferGroups([...offers.reduce((map, offer) => {
     const key = offer.product_key || `offer:${offer.id}`;
     if (!map.has(key)) map.set(key, []);
     map.get(key).push(offer);
     return map;
-  }, new Map()).values()];
+  }, new Map()).values()], sortOrder);
   useEffect(() => {
     if (view !== 'ofertas' || visibleCount >= groups.length || !moreOffers.current || !('IntersectionObserver' in window)) return;
     const observer = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) setVisibleCount(count => Math.min(count + PAGE_SIZE, groups.length)); }, {rootMargin:'300px 0px'});
@@ -166,7 +168,7 @@ function App() {
     {view === 'ofertas' ? <main className="offers-content">
 
       <CategoryBar selected={category} onSelect={setCategory} />
-      <div className="my-2 flex items-center justify-between gap-2 text-xs text-[#92705c]"><div className="offer-count">{hasIrresistible && <button type="button" className={`irresistible-filter${irresistibleOnly ? ' active' : ''}`} aria-pressed={irresistibleOnly} onClick={() => setIrresistibleOnly(current => !current)}><Icon icon={IconBolt} className="irresistible-bolt" size={15}/>Irresistíveis</button>}<button type="button" className={`irresistible-filter price-drop-filter${priceDropOnly ? ' active' : ''}`} aria-pressed={priceDropOnly} onClick={() => setPriceDropOnly(current => !current)}><Icon icon={IconArrowDown} size={15}/>Baixaram</button></div><div className="market-filter flex min-w-0 items-center gap-1"><select aria-label="Supermercado" value={store} onChange={e => setStore(e.target.value)} className="min-w-0 max-w-48 bg-transparent py-2 font-semibold text-[#a53f25]"><option value="">Todos os mercados</option>{Object.entries(data.stores).map(([id, value]) => <option key={id} value={id}>{value[0]}</option>)}</select></div></div>
+      <div className="offer-toolbar my-2 flex items-center justify-between gap-2 text-xs text-[#92705c]"><div className="offer-count">{hasIrresistible && <button type="button" className={`irresistible-filter${irresistibleOnly ? ' active' : ''}`} aria-pressed={irresistibleOnly} onClick={() => setIrresistibleOnly(current => !current)}><Icon icon={IconBolt} className="irresistible-bolt" size={15}/>Irresistíveis</button>}<button type="button" className={`irresistible-filter price-drop-filter${priceDropOnly ? ' active' : ''}`} aria-pressed={priceDropOnly} onClick={() => setPriceDropOnly(current => !current)}><Icon icon={IconArrowDown} size={15}/>Baixaram</button><select aria-label="Ordenar produtos" className="irresistible-filter offer-sort" value={sortOrder} onChange={event => setSortOrder(event.target.value)}><option value="">Ordenar</option><option value="price-desc">Maior preço</option><option value="price-asc">Menor preço</option><option value="name-asc">A–Z</option><option value="name-desc">Z–A</option></select></div><div className="market-filter flex min-w-0 items-center gap-1"><select aria-label="Supermercado" value={store} onChange={e => setStore(e.target.value)} className="min-w-0 max-w-48 bg-transparent py-2 font-semibold text-[#a53f25]"><option value="">Todos os mercados</option>{Object.entries(data.stores).map(([id, value]) => <option key={id} value={id}>{value[0]}</option>)}</select></div></div>
       <div className={gridView && groups.length ? "products-grid" : "space-y-2"}>{groups.length ? groups.slice(0,visibleCount).map(group => gridView ? <GridProduct key={group[0].product_key || group[0].id} group={group} stores={data.stores} onPreview={setPreviewImage} onHistory={setHistoryOffer} onAdd={chooseOffer} /> : <section key={group[0].product_key || group[0].id} className="overflow-hidden rounded-xl border border-[#f1dfd0] bg-white">{groupEqualPrices(group).map((storeGroup,_,allGroups) => <StorePrice key={storeGroup.key} storeGroup={storeGroup} allGroups={allGroups} stores={data.stores} onPreview={setPreviewImage} onAdd={chooseOffer} onHistory={setHistoryOffer}/>)}</section>) : <div className="rounded-xl border border-[#f1dfd0] bg-white px-4 py-12 text-center text-sm text-[#987766]">Nenhum produto encontrado.</div>}</div>
       {visibleCount < groups.length && <button ref={moreOffers} type="button" className="load-more" onClick={() => setVisibleCount(count => Math.min(count + PAGE_SIZE, groups.length))}>Carregar mais</button>}
 

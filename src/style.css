@@ -57,3 +57,5 @@
 .price-trend{display:inline-flex;align-items:center;vertical-align:middle}.price-up{color:#b93422}.price-down{color:#328147}.price-drop-filter svg{color:#328147}.price-drop-filter.active svg{color:#fff}
 
 .offer-count{flex:none}.market-filter{flex:1;justify-content:flex-end}.market-filter select{width:100%;text-overflow:ellipsis}
+
+.offer-toolbar{flex-wrap:wrap}.offer-count{flex-wrap:wrap}.offer-sort{max-width:120px}.offer-toolbar .market-filter{min-width:140px}
