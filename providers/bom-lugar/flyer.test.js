@@ -36,3 +36,14 @@ test('explica quando a API de leitura atinge o limite de requisições', async (
   try {await assert.rejects(extractFlyerImage(Buffer.from('x'),'image/jpeg','https://example.com','2026-10-29'), /limite.*Gemini/i);}
   finally {globalThis.fetch=original;if(key===undefined)delete process.env.GEMINI_API_KEY;else process.env.GEMINI_API_KEY=key;}
 });
+
+test('Bom Lugar informa folhetos vencidos quando nenhum está vigente', async () => {
+  const {importBomLugar} = await import('./index.js');
+  const original=globalThis.fetch, key=process.env.GEMINI_API_KEY, path=process.env.AI_CONFIG_PATH;
+  process.env.GEMINI_API_KEY='test'; process.env.AI_CONFIG_PATH='/nonexistent/ai-config.json';
+  const html='<section><h2>Ofertas da semana</h2><img src="https://static.wixstatic.com/media/folheto.jpg/v1/fill/w_500/folheto.jpg"></section>';
+  const text=JSON.stringify({valid_from:'2026-10-27',valid_until:'2026-10-29',products:[{name:'Arroz 5kg',price:10}]});
+  globalThis.fetch=async url => String(url).includes('wixstatic') ? new Response(Buffer.from('x'),{headers:{'content-type':'image/jpeg'}}) : new Response(JSON.stringify({candidates:[{content:{parts:[{text}]}}],choices:[{message:{content:text}}]}));
+  try { await assert.rejects(importBomLugar(html,'2026-11-01'),/vencidos/); }
+  finally { globalThis.fetch=original; if(key===undefined)delete process.env.GEMINI_API_KEY;else process.env.GEMINI_API_KEY=key; if(path===undefined)delete process.env.AI_CONFIG_PATH;else process.env.AI_CONFIG_PATH=path; }
+});

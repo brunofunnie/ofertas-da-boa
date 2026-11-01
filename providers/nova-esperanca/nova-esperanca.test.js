@@ -26,3 +26,11 @@ test('preserva ofertas lidas quando outro folheto falha e sinaliza atualização
  const read=async()=>JSON.stringify({valid_from:'2026-10-30',valid_until:'2026-10-31',products:[{name:'Leite 1L',price:5}]});
  const offers=await importFlyers(html,'2026-10-30',{fetcher,read});assert.equal(offers.length,1);assert.equal(offers.warnings.length,1);
 });
+
+test('folhetos vencidos são informados em vez de erro genérico',async()=>{
+ const html=`<main><div class="elementor-widget-image-gallery"><figure class="gallery-item"><a href="/wp-content/uploads/folheto.jpg"></a></figure></div></main>`;
+ const read=async()=>JSON.stringify({valid_from:'2026-10-27',valid_until:'2026-10-29',products:[{name:'Arroz 5kg',price:19.9}]});
+ const fetcher=async()=>new Response(Buffer.from('image'),{headers:{'content-type':'image/jpeg'}});
+ await assert.rejects(importFlyers(html,'2026-11-01',{fetcher,read}),/vencidos/);
+ assert.deepEqual(await importFlyers(html,'2026-11-01',{fetcher,read:async()=>JSON.stringify({products:[]})}),[]);
+});

@@ -1,7 +1,7 @@
 import * as cheerio from 'cheerio';
 import {activeConfig, readImage} from '../../ai/index.js';
 import {outboundAgent} from '../../ai/network.js';
-import {parseFlyer} from '../flyer.js';
+import {parseFlyer,expiredFlyer,EXPIRED_FLYERS} from '../flyer.js';
 export {parseFlyer} from '../flyer.js';
 
 export const id='nova-esperanca';
@@ -34,7 +34,9 @@ export async function importFlyers(html,today,{fetcher=fetch,read}={}) {
     for await (const chunk of response.body) {length+=chunk.length;if(length>10_000_000)throw Error('Folheto excede o tamanho permitido.');chunks.push(chunk);}
     const output=await extract(prompt,Buffer.concat(chunks),mime);
     let data;try {data=JSON.parse(output.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,''));}catch{throw Error('Leitura do folheto retornou dados inválidos.');}
-    return parseFlyer(data,imageUrl,today);
+    const offers=parseFlyer(data,imageUrl,today);
+    if (!offers.length && expiredFlyer(data,today)) throw Error(EXPIRED_FLYERS);
+    return offers;
   }
   await Promise.all(Array.from({length:Math.min(2,images.length)},async()=>{
     while (next<images.length) {
