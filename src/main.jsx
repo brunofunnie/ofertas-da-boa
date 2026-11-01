@@ -99,7 +99,7 @@ function App() {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const moreOffers = useRef(null);
   useEffect(() => { setVisibleCount(PAGE_SIZE); }, [category, store, query, irresistibleOnly, priceDropOnly, priceMin, priceMax, sortOrder]);
-  const [gridView, setGridView] = useState(() => { try {return localStorage.getItem('offers-view') === 'grid';} catch {return false;} });
+  const [gridView, setGridView] = useState(() => { try {return localStorage.getItem('offers-view') !== 'list';} catch {return true;} });
   function toggleGrid() {setGridView(current => {const next=!current;try {localStorage.setItem('offers-view',next?'grid':'list');} catch {}return next;});}
   const [showTop, setShowTop] = useState(false);
   useEffect(() => { const update = () => setShowTop(window.scrollY > 200); update(); window.addEventListener('scroll', update, {passive:true}); return () => window.removeEventListener('scroll', update); }, []);
