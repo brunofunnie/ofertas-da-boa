@@ -21,3 +21,23 @@ test('reconhece a URL canônica que o Instagram usa ao abrir o post', async () =
   assert.equal(isPostUrl('/santosupermercados/p/AbC123/', '/p/Outro/'),false);
   assert.equal(isPostUrl('/santosupermercados/p/AbC123/', '/reel/AbC123/'),false);
 });
+
+test('extrai ofertas de vários posts e dos stories sem repetir imagens', async () => {
+  const {fetchInstagramOffers} = await import('./index.js');
+  const downloads = [], prompts = [];
+  const original = globalThis.fetch, key = process.env.GEMINI_API_KEY;
+  process.env.GEMINI_API_KEY = 'test';
+  const until = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  globalThis.fetch = async (url, init) => {
+    if (!String(url).includes('cdninstagram')) { const body = JSON.parse(init.body); prompts.push(body.contents?.[0].parts[0].text ?? body.messages[0].content[0].text); const text = JSON.stringify({is_promotion:true,valid_from:'2020-01-01',valid_until:until,products:[{name:`Produto ${prompts.length}`,price:10}]}); return new Response(JSON.stringify({candidates:[{content:{parts:[{text}]}}],choices:[{message:{content:text}}]})); }
+    downloads.push(String(url)); return new Response(Buffer.from('img'), {headers:{'content-type':'image/jpeg'}});
+  };
+  try {
+    const collect = async () => ({posts:[{url:'https://www.instagram.com/p/A/',caption:'Válido até sexta',images:['https://scontent.cdninstagram.com/1.jpg','https://scontent.cdninstagram.com/2.jpg']}], stories:['https://scontent.cdninstagram.com/2.jpg','https://scontent.cdninstagram.com/3.jpg']});
+    const offers = await fetchInstagramOffers('doma', {collect});
+    assert.deepEqual(downloads, ['https://scontent.cdninstagram.com/1.jpg','https://scontent.cdninstagram.com/2.jpg','https://scontent.cdninstagram.com/3.jpg']);
+    assert.deepEqual(offers.map(o => o.url), ['https://www.instagram.com/p/A/','https://www.instagram.com/p/A/','https://www.instagram.com/stories/doma/']);
+    assert.match(prompts[0], /Válido até sexta/); assert.doesNotMatch(prompts[2], /legenda/);
+    await assert.rejects(fetchInstagramOffers('doma', {collect:async () => ({posts:[{url:'x',caption:'',images:['https://evil.example/1.jpg']}],stories:[]})}), /inválido/);
+  } finally { globalThis.fetch = original; if (key === undefined) delete process.env.GEMINI_API_KEY; else process.env.GEMINI_API_KEY = key; }
+});
