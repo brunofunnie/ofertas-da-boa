@@ -1,6 +1,6 @@
 import * as cheerio from 'cheerio';
 import { activeConfig, readImage } from '../../ai/index.js';
-import { expiredFlyer, EXPIRED_FLYERS } from '../flyer.js';
+import { expiredFlyer, expiredFlyers } from '../flyer.js';
 
 export function findFlyers(html) {
   const $ = cheerio.load(html);
@@ -51,7 +51,7 @@ export async function importBomLugar(html, today) {
     if (found.expired) expired++;
     offers.push(...found);
   }
-  if (!offers.length && expired) throw Error(EXPIRED_FLYERS);
+  if (!offers.length && expired) throw expiredFlyers();
   return offers;
 }
 

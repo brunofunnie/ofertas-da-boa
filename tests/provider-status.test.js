@@ -35,7 +35,7 @@ test('consultas simultâneas do mesmo supermercado compartilham a atualização'
 test('atualização parcial salva produtos disponíveis e informa a fonte que falhou', async () => {
  const db=new Database(':memory:'); const provider={id:'teste',name:'Mercado',url:'https://example.com',fetchOffers:async()=>{const offers=[{name:'Arroz 5kg',price:1000}];offers.warnings=['Instagram: sessão expirada'];return offers;}};
  const server=createApp(db,[provider],{resolveUser:()=>({sub:'legacy-admin',email:'brunodeoliveira@gmail.com',name:'Admin',admin:true})}); await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
- try {const response=await fetch(`http://127.0.0.1:${server.address().port}/api/refresh-store`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({store:'teste'})});const result=await response.json();assert.equal(result.state,'error');assert.match(result.status,/parcial.*Instagram/);assert.equal(result.total,1);assert.equal(db.offers().length,1);}finally{await new Promise(resolve=>server.close(resolve));db.close();}
+ try {const response=await fetch(`http://127.0.0.1:${server.address().port}/api/refresh-store`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({store:'teste'})});const result=await response.json();assert.equal(result.state,'warning');assert.match(result.status,/parcial.*Instagram/);assert.equal(result.total,1);assert.equal(db.offers().length,1);}finally{await new Promise(resolve=>server.close(resolve));db.close();}
 });
 
 test('registra e apresenta o status de cada fonte, inclusive falhas e fonte não configurada', async () => {
@@ -55,4 +55,18 @@ test('mostra fontes concluídas enquanto outra ainda está atualizando', async (
  const provider={id:'teste',name:'Mercado',url:'https://example.com',sourceDefinitions:[{id:'site',name:'Site'},{id:'instagram',name:'Instagram'}],fetchWithStatus:async (_,report)=>{report({id:'site',state:'ok',status:'Concluído',total:1});started=true;await new Promise(resolve=>{finish=resolve});report({id:'instagram',state:'ok',status:'Concluído',total:0});return [{name:'Arroz 5kg',price:1000}];}};
  const server=createApp(db,[provider],{resolveUser:()=>({sub:'legacy-admin',email:'brunodeoliveira@gmail.com',name:'Admin',admin:true})});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const base=`http://127.0.0.1:${server.address().port}`;
  try{const update=fetch(base+'/api/refresh-store',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({store:'teste'})});while(!started)await new Promise(r=>setTimeout(r,5));const data=await fetch(base+'/api/data').then(r=>r.json());assert.deepEqual(data.store_sources.map(s=>s.state),['ok','running']);finish();await update;}finally{await new Promise(resolve=>server.close(resolve));db.close();}
+});
+
+test('aviso do provider vira estado amarelo com a mensagem própria; erro de fetch continua vermelho', async () => {
+ const {warning}=await import('../providers/status.js');
+ let mode='warn'; const db=new Database(':memory:'); const provider={id:'teste',name:'Mercado',url:'https://example.com',fetchOffers:async()=>{if(mode==='warn')throw warning('Folhetos vencidos; aguardando ofertas novas.');if(mode==='empty')return [];if(mode==='fail')throw Error('HTTP 503');return [{name:'Arroz 5kg',price:1000}];}};
+ const server=createApp(db,[provider],{resolveUser:()=>({sub:'legacy-admin',email:'brunodeoliveira@gmail.com',name:'Admin',admin:true})}); await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const base=`http://127.0.0.1:${server.address().port}`; const update=()=>fetch(base+'/api/refresh-store',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({store:'teste'})}).then(r=>r.json());
+ try {
+  let result=await update(); assert.equal(result.state,'warning'); assert.equal(result.status,'Folhetos vencidos; aguardando ofertas novas.');
+  mode='empty'; result=await update(); assert.equal(result.state,'warning'); assert.match(result.status,/Nenhuma oferta/);
+  mode='fail'; result=await update(); assert.equal(result.state,'error'); assert.equal(result.status,'Não atualizado: Não foi possível atualizar a fonte.');
+  mode='ok'; result=await update(); assert.equal(result.state,'ok');
+  const data=await fetch(base+'/api/data').then(r=>r.json()); assert.equal(data.sources.find(s=>s.store==='teste').state,'ok');
+ } finally { await new Promise(resolve=>server.close(resolve)); db.close(); }
 });

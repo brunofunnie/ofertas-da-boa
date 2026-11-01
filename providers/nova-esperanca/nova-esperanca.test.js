@@ -31,6 +31,6 @@ test('folhetos vencidos são informados em vez de erro genérico',async()=>{
  const html=`<main><div class="elementor-widget-image-gallery"><figure class="gallery-item"><a href="/wp-content/uploads/folheto.jpg"></a></figure></div></main>`;
  const read=async()=>JSON.stringify({valid_from:'2026-10-27',valid_until:'2026-10-29',products:[{name:'Arroz 5kg',price:19.9}]});
  const fetcher=async()=>new Response(Buffer.from('image'),{headers:{'content-type':'image/jpeg'}});
- await assert.rejects(importFlyers(html,'2026-11-01',{fetcher,read}),/vencidos/);
+ await assert.rejects(importFlyers(html,'2026-11-01',{fetcher,read}),error=>error.warning===true && /vencidos/.test(error.message));
  assert.deepEqual(await importFlyers(html,'2026-11-01',{fetcher,read:async()=>JSON.stringify({products:[]})}),[]);
 });

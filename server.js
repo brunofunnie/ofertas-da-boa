@@ -10,6 +10,7 @@ import {createImageStore, downloadImage} from './image-store.js';
 import {startRefreshScheduler} from './scheduler.js';
 import { providers } from './providers/index.js';
 import { cookiesPath, normalizeCookies } from './providers/instagram/index.js';
+import { warning } from './providers/status.js';
 import {publicConfig, saveConfig, modelConfig, listModels} from './ai/index.js';
 import {createGoogleAuth, getSession, destroySession} from './auth/index.js';
 export { parseTauste } from './providers/tauste/index.js';
@@ -284,7 +285,7 @@ function logError(scope, error) {
   console.error(JSON.stringify({type:'error',at:new Date().toISOString(),scope,detail,...(error?.cause?.name && /^[A-Za-z]+$/.test(error.cause.name) ? {cause:error.cause.name} : {}),...(error?.cause?.cause?.code && /^[A-Z0-9_]+$/.test(error.cause.cause.code) ? {cause_code:error.cause.cause.code} : {})}));
 }
 function sourceError(message) {
-  const safe = ['Limite de requisições do Gemini atingido. Tente novamente mais tarde.','Limite de requisições do provedor de IA atingido. Tente novamente mais tarde.','Sessão do Instagram expirada ou requer verificação.','Instagram demorou para abrir a publicação. Tente atualizar novamente.','Folhetos vencidos; aguardando ofertas novas.'];
+  const safe = ['Limite de requisições do Gemini atingido. Tente novamente mais tarde.','Limite de requisições do provedor de IA atingido. Tente novamente mais tarde.','Sessão do Instagram expirada ou requer verificação.','Instagram demorou para abrir a publicação. Tente atualizar novamente.'];
   return safe.includes(message) ? message : 'Não foi possível atualizar a fonte.';
 }
 function safeStoredStatus(source) {
@@ -344,16 +345,17 @@ export function createApp(db, storeProviders = providers, options = {}) {
           inFlightSources.get(provider.id)?.delete(result.id);
         };
         const offers = provider.fetchWithStatus ? await provider.fetchWithStatus(fetchPage, report) : await provider.fetchOffers(fetchPage);
-        if (!offers.length) throw Error('Nenhum produto encontrado.');
+        if (!offers.length) throw warning('Nenhuma oferta encontrada.');
         const valid=offers.map(offer=>validImportedOffer(offer)).filter(Boolean);
-        if (!valid.length) throw Error('Nenhum produto válido encontrado.');
+        if (!valid.length) throw warning('Nenhuma oferta vigente encontrada.');
         const stats=db.saveOffers(provider.id,valid);
         void syncImages();
         const warnings = offers.warnings || [];
         if (warnings.length) for (const warning of warnings) logError(`source:${provider.id}`,warning);
         const warningNames = [...new Set(warnings.map(w => /^Instagram:/i.test(w) ? 'Instagram' : /^Site:/i.test(w) ? 'Site' : 'fonte'))].join(', ');
-        return db.status(provider.id, {state:warnings.length ? 'error' : 'ok',status:warnings.length ? `Atualização parcial: ${warningNames} indisponível` : `${stats.total} produtos consultados`,...stats});
+        return db.status(provider.id, {state:warnings.length ? 'warning' : 'ok',status:warnings.length ? `Atualização parcial: ${warningNames} indisponível` : `${stats.total} produtos consultados`,...stats});
       } catch (error) {
+        if (error.warning) return db.status(provider.id, {state:'warning',status:error.message});
         logError(`refresh:${provider.id}`,error);
         return db.status(provider.id, {state:'error',status:`Não atualizado: ${sourceError(error.message)}`});
       }

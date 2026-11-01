@@ -67,9 +67,9 @@ async function fetchBoth(query, instagram, report = () => {}) {
     const id = sourceDefinitions[i].id;
     try {
       const offers = await task();
-      report(offers === null ? {id,state:'unconfigured',status:'Não configurado'} : {id,state:'ok',status:offers.length ? `${offers.length} produtos encontrados` : 'Nenhuma oferta encontrada',total:offers.length});
+      report(offers === null ? {id,state:'unconfigured',status:'Não configurado'} : offers.length ? {id,state:'ok',status:`${offers.length} produtos encontrados`,total:offers.length} : {id,state:'warning',status:'Nenhuma oferta encontrada',total:0});
       return offers || [];
-    } catch (error) { report({id,state:'error',status:error.message || 'Fonte indisponível'}); throw error; }
+    } catch (error) { report({id,state:error.warning ? 'warning' : 'error',status:error.message || 'Fonte indisponível'}); throw error; }
   }));
   const warnings = results.flatMap((result, i) => result.status === 'rejected' ? [`${i ? 'Instagram' : 'Site'}: ${result.reason?.message || 'fonte indisponível'}`] : []);
   const offers = results.flatMap(result => result.status === 'fulfilled' ? result.value : []);
