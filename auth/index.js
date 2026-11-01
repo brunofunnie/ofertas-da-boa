@@ -26,9 +26,10 @@ export function destroySession(db,req,scope='app') {
 }
 export function createGoogleAuth(options = {}) {
   const clientId=options.clientId ?? process.env.GOOGLE_CLIENT_ID, clientSecret=options.clientSecret ?? process.env.GOOGLE_CLIENT_SECRET;
-  const redirectUri=options.redirectUri ?? process.env.GOOGLE_REDIRECT_URI ?? 'http://localhost:8000/auth/google/callback';
-  const secure=redirectUri.startsWith('https://');
-  const oauth=options.client || (clientId && clientSecret ? new OAuth2Client(clientId,clientSecret,redirectUri) : null);
+  const redirectUris=String(options.redirectUri ?? process.env.GOOGLE_REDIRECT_URI ?? 'http://localhost:8000/auth/google/callback').split(',').map(x=>x.trim()).filter(Boolean);
+  const redirectFor=req=>redirectUris.find(uri=>new URL(uri).host === req.headers.host) ?? redirectUris[0];
+  const secure=redirectUris.every(uri=>uri.startsWith('https://'));
+  const oauth=options.client || (clientId && clientSecret ? new OAuth2Client(clientId,clientSecret,redirectUris[0]) : null);
   const pending=new Map();
   const cookie=(name,value,maxAge,path='/') => `${name}=${value}; Path=${path}; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
   return {
@@ -38,8 +39,8 @@ export function createGoogleAuth(options = {}) {
       for (const [key,value] of pending) if (value.expires < Date.now()) pending.delete(key);
       if (pending.size >= 1000) {res.writeHead(429);res.end();return;}
       const state=token(),nonce=token(),verifier=token(),challenge=createHash('sha256').update(verifier).digest('base64url');
-      pending.set(state,{nonce,verifier,scope,expires:Date.now()+600000});
-      const url=oauth.generateAuthUrl({scope:['openid','email','profile'],response_type:'code',state,nonce,code_challenge:challenge,code_challenge_method:'S256',...(scope === 'admin' ? {prompt:'select_account'} : {})});
+      const redirectUri=redirectFor(req);pending.set(state,{nonce,verifier,scope,redirectUri,expires:Date.now()+600000});
+      const url=oauth.generateAuthUrl({scope:['openid','email','profile'],response_type:'code',state,nonce,redirect_uri:redirectUri,code_challenge:challenge,code_challenge_method:'S256',...(scope === 'admin' ? {prompt:'select_account'} : {})});
       res.writeHead(302,{'Location':url,'Set-Cookie':cookie(scope === 'admin' ? 'ofertas_admin_oauth' : 'ofertas_oauth',state,600,'/auth/google/callback'),'Cache-Control':'no-store','Referrer-Policy':'no-referrer'});res.end();
     },
     async callback(req,res,db,url) {
@@ -50,7 +51,7 @@ export function createGoogleAuth(options = {}) {
       const same=/^[A-Za-z0-9_-]{43}$/.test(state) && /^[A-Za-z0-9_-]{43}$/.test(saved) && timingSafeEqual(Buffer.from(state),Buffer.from(saved));
       try {
         if (!oauth || !same || !attempt || attempt.expires < Date.now() || !code) throw Error('Estado de login inválido.');
-        const {tokens}=await oauth.getToken({code,codeVerifier:attempt.verifier,redirect_uri:redirectUri});
+        const {tokens}=await oauth.getToken({code,codeVerifier:attempt.verifier,redirect_uri:attempt.redirectUri});
         if (!tokens.id_token) throw Error('Token de identidade ausente.');
         const ticket=await oauth.verifyIdToken({idToken:tokens.id_token,audience:clientId});const info=ticket.getPayload();
         if (!info || info.nonce !== attempt.nonce || info.email_verified !== true || typeof info.sub !== 'string' || !info.sub || typeof info.email !== 'string' || !info.email) throw Error('Identidade Google inválida.');

@@ -1,4 +1,4 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {Database,createApp} from '../server.js';import {createSession} from '../auth/index.js';
+import {test} from 'node:test';import http from 'node:http';import assert from 'node:assert/strict';import {Database,createApp} from '../server.js';import {createSession} from '../auth/index.js';
 
 test('ofertas públicas; listas pertencem ao usuário; ações administrativas são restritas', async()=>{
  const db=new Database(':memory:');db.saveOffers('tauste',[{name:'Arroz 5kg',price:1000}]);const server=createApp(db,[]);await new Promise(r=>server.listen(0,'127.0.0.1',r));const root=`http://127.0.0.1:${server.address().port}`;
@@ -26,5 +26,14 @@ test('login Google exige estado, PKCE, nonce e email verificado antes de criar s
   start=await fetch(root+'/auth/google',{redirect:'manual'});const state=request.state, c=start.headers.get('set-cookie').split(';')[0];let callback=await fetch(`${root}/auth/google/callback?state=${state}&code=one`,{redirect:'manual',headers:{cookie:c}});assert.equal(callback.headers.get('location'),'/');const session=callback.headers.getSetCookie().find(x=>x.startsWith('ofertas_session=')).split(';')[0];let data=await(await fetch(root+'/api/data',{headers:{cookie:session}})).json();assert.equal(data.user.admin,true);assert.equal(data.user.picture,'https://lh3.googleusercontent.com/avatar');
   const out=await fetch(root+'/api/logout',{method:'POST',headers:{'content-type':'application/json',cookie:session},body:'{}'});assert.equal(out.status,200);data=await(await fetch(root+'/api/data',{headers:{cookie:session}})).json();assert.equal(data.user,null);
   verified=false;start=await fetch(root+'/auth/google',{redirect:'manual'});callback=await fetch(`${root}/auth/google/callback?state=${request.state}&code=two`,{redirect:'manual',headers:{cookie:start.headers.get('set-cookie').split(';')[0]}});assert.equal(callback.headers.get('location'),'/?login=erro');assert.ok(!callback.headers.getSetCookie().some(x=>x.startsWith('ofertas_session=')));
+ }finally{await new Promise(r=>server.close(r));db.close();}
+});
+
+test('redirect URI do Google segue o host da requisição quando há vários domínios', async()=>{
+ let request;const google={generateAuthUrl:params=>{request=params;return 'https://accounts.google.com/';},getToken:async()=>({tokens:{}}),verifyIdToken:async()=>null};
+ const db=new Database(':memory:');const server=createApp(db,[],{googleAuth:{client:google,clientId:'id',clientSecret:'secret',redirectUri:'https://ofertasdaboa.com.br/auth/google/callback, https://ofertas.funnie.dev/auth/google/callback'}});await new Promise(r=>server.listen(0,'127.0.0.1',r));const root=`http://127.0.0.1:${server.address().port}`;
+ try {
+  const begin=host=>new Promise((resolve,reject)=>http.get(root+'/auth/google',{headers:{host}},res=>{res.resume();res.on('end',resolve);}).on('error',reject));
+  for (const [host,expected] of [['ofertas.funnie.dev','https://ofertas.funnie.dev/auth/google/callback'],['ofertasdaboa.com.br','https://ofertasdaboa.com.br/auth/google/callback'],['desconhecido.example','https://ofertasdaboa.com.br/auth/google/callback']]) {await begin(host);assert.equal(request.redirect_uri,expected);}
  }finally{await new Promise(r=>server.close(r));db.close();}
 });

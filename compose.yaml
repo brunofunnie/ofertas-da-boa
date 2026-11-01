@@ -26,7 +26,7 @@ services:
       R2_IMAGES_CREDENTIALS: ${R2_IMAGES_CREDENTIALS:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      GOOGLE_REDIRECT_URI: https://ofertas.funnie.dev/auth/google/callback
+      GOOGLE_REDIRECT_URI: https://ofertasdaboa.com.br/auth/google/callback,https://ofertas.funnie.dev/auth/google/callback
     volumes:
       - ./data:/data
       - ./data/local:/app/.local
